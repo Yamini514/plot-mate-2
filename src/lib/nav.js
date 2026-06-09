@@ -1,0 +1,33 @@
+export const adminNav = [
+  { label: "Dashboard", href: "/admin", icon: "layout-dashboard", group: "Overview" },
+  { label: "Plot Map", href: "/admin/plots", icon: "map", group: "Overview" },
+  { label: "Plot Owners", href: "/admin/owners", icon: "users", group: "Community" },
+  { label: "Treasury", href: "/admin/treasury", icon: "wallet", badge: "61", group: "Finance" },
+  { label: "Reminders", href: "/admin/reminders", icon: "bell-ring", badge: "8", group: "Finance" },
+  { label: "Reports", href: "/admin/reports", icon: "bar-chart-3", group: "Finance" },
+  { label: "Complaints", href: "/admin/complaints", icon: "message-square-warning", group: "Community" },
+  { label: "Amenities", href: "/admin/amenities", icon: "calendar-check", group: "Community" },
+  { label: "Events", href: "/admin/events", icon: "calendar-days", group: "Community" },
+  { label: "Polls", href: "/admin/polls", icon: "vote", group: "Community" },
+  { label: "Visitors", href: "/admin/visitors", icon: "door-open", group: "Operations" },
+  { label: "Staff & Vendors", href: "/admin/staff", icon: "hard-hat", group: "Operations" },
+  { label: "Site Photos", href: "/admin/photos", icon: "image", group: "Operations" },
+  { label: "Announcements", href: "/admin/announcements", icon: "megaphone", group: "Operations" },
+  { label: "Documents", href: "/admin/documents", icon: "folder", group: "Operations" },
+  { label: "Settings", href: "/admin/settings", icon: "settings", group: "System" },
+];
+
+export const memberNav = [
+  { label: "My Plot", href: "/member", icon: "home", group: "Me" },
+  { label: "Dues & Pay", href: "/member/dues", icon: "wallet", group: "Me" },
+  { label: "Payment History", href: "/member/payments", icon: "receipt", group: "Me" },
+  { label: "Treasury", href: "/member/treasury", icon: "landmark", group: "Community" },
+  { label: "Complaints", href: "/member/complaints", icon: "message-square-warning", group: "Community" },
+  { label: "Amenities", href: "/member/amenities", icon: "calendar-check", group: "Community" },
+  { label: "Events", href: "/member/events", icon: "calendar-days", group: "Community" },
+  { label: "Polls", href: "/member/polls", icon: "vote", group: "Community" },
+  { label: "Site Photos", href: "/member/photos", icon: "image", group: "Community" },
+  { label: "Announcements", href: "/member/announcements", icon: "megaphone", group: "Community" },
+  { label: "Documents", href: "/member/documents", icon: "folder", group: "Community" },
+  { label: "Directory", href: "/member/directory", icon: "contact", group: "Community" },
+];
