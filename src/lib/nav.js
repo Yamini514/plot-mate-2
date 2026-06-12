@@ -41,6 +41,7 @@ export const memberNav = [
   { label: "Billing & Invoices", href: "/member/billing", icon: "badge-indian-rupee", group: "Me" },
   { label: "Payment History", href: "/member/payments", icon: "receipt", group: "Me" },
   { label: "Service Requests", href: "/member/helpdesk", icon: "life-buoy", group: "Me" },
+  { label: "Gate & Visitors", href: "/member/visitors", icon: "scan-line", badge: "2", group: "Me" },
   { label: "Treasury", href: "/member/treasury", icon: "landmark", group: "Community" },
   { label: "Complaints", href: "/member/complaints", icon: "message-square-warning", group: "Community" },
   { label: "Amenities", href: "/member/amenities", icon: "calendar-check", group: "Community" },
