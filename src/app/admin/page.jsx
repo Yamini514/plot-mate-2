@@ -24,6 +24,7 @@ import {
   payments,
   association,
 } from "@/lib/mock-data";
+import { guardStats, incidents, emergencyAlerts } from "@/lib/guard-data";
 import { formatINR } from "@/lib/utils";
 
 const activityIcon = {
@@ -135,6 +136,39 @@ export default function AdminDashboard() {
           </div>
         </Card>
       </div>
+
+      {/* Security & gate snapshot */}
+      <Card className="mt-6">
+        <CardHeader
+          title="Security & gate operations"
+          subtitle="Live snapshot from the security desk"
+          icon="shield-check"
+          action={
+            <Link
+              href="/admin/security"
+              className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
+            >
+              Open Security Operations <Icon name="arrow-right" size={13} />
+            </Link>
+          }
+        />
+        <div className="grid grid-cols-2 gap-px bg-slate-100 sm:grid-cols-4">
+          {[
+            { label: "Visitors today", value: guardStats.visitorsToday, icon: "users-round", tone: "text-brand-600" },
+            { label: "Open incidents", value: incidents.filter((i) => ["open", "investigating", "escalated"].includes(i.status)).length, icon: "shield-alert", tone: "text-rose-600" },
+            { label: "Active alerts", value: emergencyAlerts.filter((a) => a.status === "open").length, icon: "siren", tone: "text-amber-600" },
+            { label: "Awaiting pickup", value: guardStats.packagesWaiting, icon: "package", tone: "text-sky-600" },
+          ].map((s) => (
+            <div key={s.label} className="bg-white px-5 py-4">
+              <div className="flex items-center gap-2">
+                <Icon name={s.icon} size={15} className={s.tone} />
+                <span className="text-xs text-slate-500">{s.label}</span>
+              </div>
+              <p className="mt-1.5 text-2xl font-semibold tracking-tight text-slate-900">{s.value}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
 
       {/* Financial snapshot + activity */}
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">

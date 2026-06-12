@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth, DEMO_ACCOUNTS } from "@/lib/auth";
+import { useAuth, DEMO_ACCOUNTS, homePath } from "@/lib/auth";
 import { association } from "@/lib/mock-data";
 import { Icon } from "@/components/Icon";
 import { cn } from "@/lib/utils";
@@ -17,7 +17,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (ready && user) router.replace(user.role === "admin" ? "/admin" : "/member");
+    if (ready && user) router.replace(homePath(user.role));
   }, [ready, user, router]);
 
   const submit = (e) => {
@@ -31,7 +31,7 @@ export default function LoginPage() {
       return;
     }
     const acct = DEMO_ACCOUNTS.find((a) => a.email === email.trim().toLowerCase());
-    router.replace(acct?.role === "admin" ? "/admin" : "/member");
+    router.replace(homePath(acct?.role));
   };
 
   const fill = (role) => {
@@ -179,10 +179,11 @@ export default function LoginPage() {
               <Icon name="sparkles" size={14} className="text-brand-500" />
               Demo accounts — click to autofill
             </p>
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
               {[
                 { role: "admin", label: "Admin / Secretary", icon: "shield-check" },
                 { role: "member", label: "Member / Owner", icon: "user" },
+                { role: "guard", label: "Security Guard", icon: "shield" },
               ].map((d) => {
                 const a = DEMO_ACCOUNTS.find((x) => x.role === d.role);
                 return (

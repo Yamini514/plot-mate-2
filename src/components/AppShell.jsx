@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth";
+import { useAuth, homePath } from "@/lib/auth";
 import { association } from "@/lib/mock-data";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
@@ -19,8 +19,7 @@ export function AppShell({ nav, role, children }) {
   useEffect(() => {
     if (!ready) return;
     if (!user) router.replace("/login");
-    else if (user.role !== role)
-      router.replace(user.role === "admin" ? "/admin" : "/member");
+    else if (user.role !== role) router.replace(homePath(user.role));
   }, [ready, user, role, router]);
 
   useEffect(() => setMobileOpen(false), [pathname]);

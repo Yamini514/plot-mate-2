@@ -18,7 +18,22 @@ export const DEMO_ACCOUNTS = [
     title: "Plot Owner",
     plotNo: "P-047",
   },
+  {
+    name: "Rajappa Gowda",
+    email: "guard@greenaeroview.in",
+    password: "guard123",
+    role: "guard",
+    title: "Security Guard · Main Gate",
+    guardId: "GRD-04",
+  },
 ];
+
+/** Landing route for a given role. */
+export function homePath(role) {
+  if (role === "admin") return "/admin";
+  if (role === "guard") return "/guard";
+  return "/member";
+}
 
 const AuthContext = createContext(null);
 const STORAGE_KEY = "plotmate.session";
