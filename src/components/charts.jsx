@@ -101,6 +101,93 @@ export function StatusDonut({ data, height = 220 }) {
   );
 }
 
+/* ---- Count-based charts (no currency formatting) ---- */
+
+export function VisitorsByHourChart({ data, height = 260 }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 10, right: 8, left: -18, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+        <XAxis dataKey="hour" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} interval={0} />
+        <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <Tooltip {...tooltipStyle} cursor={{ fill: "#f8fafc" }} />
+        <Bar dataKey="visitors" name="Visitors" fill={BRAND} radius={[6, 6, 0, 0]} barSize={16} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function TrafficTrendChart({ data, height = 260 }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{ top: 10, right: 8, left: -18, bottom: 0 }}>
+        <defs>
+          <linearGradient id="gVis" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={BRAND} stopOpacity={0.35} />
+            <stop offset="100%" stopColor={BRAND} stopOpacity={0} />
+          </linearGradient>
+          <linearGradient id="gDel" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={SKY} stopOpacity={0.3} />
+            <stop offset="100%" stopColor={SKY} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+        <XAxis dataKey="day" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <Tooltip {...tooltipStyle} />
+        <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+        <Area type="monotone" dataKey="visitors" name="Visitors" stroke={BRAND} strokeWidth={2} fill="url(#gVis)" />
+        <Area type="monotone" dataKey="deliveries" name="Deliveries" stroke={SKY} strokeWidth={2} fill="url(#gDel)" />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function BillingTrendChart({ data, height = 260 }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{ top: 10, right: 8, left: -8, bottom: 0 }}>
+        <defs>
+          <linearGradient id="gBilled" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={SKY} stopOpacity={0.3} />
+            <stop offset="100%" stopColor={SKY} stopOpacity={0} />
+          </linearGradient>
+          <linearGradient id="gCollected" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={BRAND} stopOpacity={0.35} />
+            <stop offset="100%" stopColor={BRAND} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+        <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickFormatter={(v) => formatINR(v, { compact: true })} />
+        <Tooltip {...tooltipStyle} formatter={(v) => formatINR(Number(v))} />
+        <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+        <Area type="monotone" dataKey="billed" name="Billed" stroke={SKY} strokeWidth={2} fill="url(#gBilled)" />
+        <Area type="monotone" dataKey="collected" name="Collected" stroke={BRAND} strokeWidth={2} fill="url(#gCollected)" />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Horizontal category bar for counts (no currency formatting).
+export function CountBarChart({ data, height = 280, color }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} layout="vertical" margin={{ left: 16, right: 16 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+        <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} width={120} />
+        <Tooltip {...tooltipStyle} cursor={{ fill: "#f8fafc" }} />
+        <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={16}>
+          {data.map((d, i) => (
+            <Cell key={i} fill={d.color ?? color ?? PALETTE[i % PALETTE.length]} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 export function CategoryBarChart({ data }) {
   return (
     <ResponsiveContainer width="100%" height={280}>
