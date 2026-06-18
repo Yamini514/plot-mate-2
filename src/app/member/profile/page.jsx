@@ -135,7 +135,7 @@ export default function MemberProfile() {
             }}
           />
           <div className="relative flex flex-wrap items-center gap-4">
-            <Avatar name={name} size={64} className="bg-white/20 text-white" />
+            <Avatar name={name} src={me?.avatarUrl ?? user?.avatarUrl} size={64} className="bg-white/20 text-white" />
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-xl font-semibold">{name}</h2>

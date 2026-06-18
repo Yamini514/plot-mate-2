@@ -26,7 +26,9 @@ const FALLBACK = {
   location: "",
   registrationNo: "",
   totalPlots: 0,
+  basePayMode: "per_sqyd", // per_sqyd (size × rate) | per_plot (flat amount)
   ratePerSqyd: 0,
+  basePayFlat: 0,
   membershipFee: 0,
   latePenaltyPct: 0,
   dueDate: "",

@@ -348,8 +348,8 @@ export function EmptyState({ icon = "inbox", title, subtitle }) {
 }
 
 /* ---------------- Avatar ---------------- */
-export function Avatar({ name, size = 36, className }) {
-  const init = name
+export function Avatar({ name, src, size = 36, className }) {
+  const init = (name ?? "")
     .split(" ")
     .map((p) => p[0])
     .slice(0, 2)
@@ -358,12 +358,17 @@ export function Avatar({ name, size = 36, className }) {
   return (
     <span
       className={cn(
-        "grid shrink-0 place-items-center rounded-full bg-brand-100 font-semibold text-brand-700",
+        "grid shrink-0 place-items-center overflow-hidden rounded-full bg-brand-100 font-semibold text-brand-700",
         className,
       )}
       style={{ width: size, height: size, fontSize: size * 0.36 }}
     >
-      {init}
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt={name || "avatar"} className="h-full w-full object-cover" />
+      ) : (
+        init
+      )}
     </span>
   );
 }

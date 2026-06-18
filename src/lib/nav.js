@@ -9,7 +9,7 @@ export const adminNav = [
   { label: "Reports", href: "/admin/reports", icon: "bar-chart-3", group: "Finance" },
   // Collections page hosts the billing overview + invoices as tabs.
   { label: "Collections", href: "/admin/billing", icon: "gauge", group: "Billing" },
-  { label: "Maintenance Plans", href: "/admin/billing/plans", icon: "scroll-text", group: "Billing" },
+  { label: "Charges & Fees", href: "/admin/billing/plans", icon: "scroll-text", group: "Billing" },
   // Helpdesk page hosts the analytics overview + tickets as tabs.
   { label: "Helpdesk", href: "/admin/helpdesk", icon: "life-buoy", group: "Support" },
   { label: "Complaints", href: "/admin/complaints", icon: "message-square-warning", group: "Community" },

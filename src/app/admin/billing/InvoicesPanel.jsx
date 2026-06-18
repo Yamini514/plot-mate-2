@@ -6,6 +6,7 @@ import {
   Card,
   Button,
   StatusBadge,
+  Badge,
   Segmented,
   Table,
   Th,
@@ -23,6 +24,7 @@ import { useToast } from "@/components/Toast";
 import { PaymentSlipModal } from "@/components/PaymentSlip";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import { feeCategory } from "@/lib/billing-data";
 import { formatINR } from "@/lib/utils";
 
 const FILTERS = [
@@ -44,6 +46,13 @@ function csvEscape(v) {
 export function InvoicesPanel() {
   const toast = useToast();
   const { data: raw, reload } = useApi("/admin/billing/invoices", { page_size: 300 });
+  // Active plans drive both the "Generate invoices" dialog (one invoice per
+  // plot) and the "Charge an owner" dialog (a single owner). Plots feed the
+  // owner picker for one-off charges.
+  const { data: plansRaw } = useApi("/admin/billing/plans");
+  const plans = normalizeList(plansRaw).filter((p) => p.active);
+  const { data: plotsRaw } = useApi("/admin/plots", { page_size: 300 });
+  const plotsList = normalizeList(plotsRaw);
   // Map backend fields to the labels this page uses (owner/plan/issued/type).
   const rows = normalizeList(raw).map((i) => ({
     ...i, owner: i.ownerName, plan: i.planName, issued: i.issuedOn, type: i.propertyType,
@@ -60,6 +69,10 @@ export function InvoicesPanel() {
   const [recordSaving, setRecordSaving] = useState(false); // record-payment submit
   const [waiveSaving, setWaiveSaving] = useState(false); // waiver submit
   const [lateFeeSaving, setLateFeeSaving] = useState(false); // apply late fees
+  const [genOpen, setGenOpen] = useState(false); // "Generate invoices" dialog
+  const [genSaving, setGenSaving] = useState(false); // generate submit
+  const [chargeOpen, setChargeOpen] = useState(false); // "Charge an owner" dialog
+  const [chargeSaving, setChargeSaving] = useState(false); // charge submit
 
   const counts = useMemo(() => {
     const c = { all: rows.length };
@@ -165,14 +178,53 @@ export function InvoicesPanel() {
     }
   };
 
-  // Move draft invoices to "generated".
-  const generate = () => {
-    const draftIds = rows.filter((r) => r.status === "draft").map((r) => r.id);
-    if (!draftIds.length) {
-      toast("No draft invoices to generate", "info");
+  // Generate invoices: one per active plot for the chosen plan + period.
+  // The backend skips plots already invoiced for that plan+period, so re-running
+  // only bills newly added owners — no duplicates for existing ones.
+  const generate = async ({ planId, period, dueDate }) => {
+    if (!planId) {
+      toast("Pick a plan", "error");
       return;
     }
-    setStatus(draftIds, "generated", "generated");
+    setGenSaving(true);
+    try {
+      const { data } = await api.post("/admin/billing/invoices/generate", {
+        planId, period: period || undefined, dueDate: dueDate || undefined,
+      });
+      toast(
+        data.count > 0
+          ? `${data.count} invoice${data.count > 1 ? "s" : ""} generated for ${data.period}`
+          : `No new invoices — every plot is already billed for ${data.period}`,
+        data.count > 0 ? "success" : "info",
+      );
+      setGenOpen(false);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not generate invoices", "error");
+    } finally {
+      setGenSaving(false);
+    }
+  };
+
+  // Charge a single owner a one-off fee (transfer, NOC, penalty, ad-hoc).
+  const chargeOwner = async ({ plotId, planId, dueDate }) => {
+    if (!plotId || !planId) {
+      toast("Pick an owner and a fee", "error");
+      return;
+    }
+    setChargeSaving(true);
+    try {
+      const { data } = await api.post("/admin/billing/invoices/charge", {
+        plotId, planId, dueDate: dueDate || undefined,
+      });
+      toast(`Charged ${formatINR(data.amount + data.tax)} to ${data.ownerName} · ${data.number}`);
+      setChargeOpen(false);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not charge owner", "error");
+    } finally {
+      setChargeSaving(false);
+    }
   };
 
   const exportCSV = () => {
@@ -210,7 +262,8 @@ export function InvoicesPanel() {
           <>
             <Button variant="secondary" icon="alarm-clock" loading={lateFeeSaving} onClick={applyLateFees}>Apply late fees</Button>
             <Button variant="secondary" icon="download" onClick={exportCSV}>Export</Button>
-            <Button icon="file-plus" onClick={generate}>Generate invoices</Button>
+            <Button variant="secondary" icon="user-plus" onClick={() => setChargeOpen(true)}>Charge owner</Button>
+            <Button icon="file-plus" onClick={() => setGenOpen(true)}>Generate invoices</Button>
           </>
         }
       />
@@ -270,7 +323,12 @@ export function InvoicesPanel() {
                     <p className="text-slate-700">{i.owner}</p>
                     <p className="text-xs text-slate-400">{i.property} · {i.type}</p>
                   </Td>
-                  <Td className="text-slate-600">{i.plan}</Td>
+                  <Td>
+                    <p className="text-slate-600">{i.plan}</p>
+                    <Badge tone={feeCategory(i.category).tone} className="mt-0.5">
+                      <Icon name={feeCategory(i.category).icon} size={10} /> {feeCategory(i.category).label}
+                    </Badge>
+                  </Td>
                   <Td className="text-slate-500">{i.dueDate}</Td>
                   <Td className="text-right font-medium text-slate-700">{formatINR(i.amount + i.lateFee)}</Td>
                   <Td className="text-right font-semibold text-slate-800">{i.balance > 0 ? formatINR(i.balance) : "—"}</Td>
@@ -401,7 +459,117 @@ export function InvoicesPanel() {
 
       {/* Waiver / discount */}
       <WaiveModal invoice={waiveFor} onClose={() => setWaiveFor(null)} onApply={applyWaiver} saving={waiveSaving} />
+
+      {/* Generate invoices — one slip per active plot for a plan/period */}
+      <GenerateModal open={genOpen} plans={plans} onClose={() => setGenOpen(false)} onGenerate={generate} saving={genSaving} />
+
+      {/* Charge an owner — a single one-off fee (transfer, NOC, penalty, ad-hoc) */}
+      <ChargeOwnerModal open={chargeOpen} plots={plotsList} fees={plans} onClose={() => setChargeOpen(false)} onCharge={chargeOwner} saving={chargeSaving} />
     </div>
+  );
+}
+
+function ChargeOwnerModal({ open, plots, fees, onClose, onCharge, saving }) {
+  const [plotId, setPlotId] = useState("");
+  const [planId, setPlanId] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const fee = fees.find((f) => String(f.dbId) === String(planId));
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Charge an owner"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button icon="hand-coins" loading={saving} onClick={() => onCharge({ plotId, planId, dueDate })}>
+            Charge{fee ? ` ${formatINR(fee.amount)}` : ""}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-slate-500">
+          Issues a single invoice (payment slip) to one owner — for one-off fees like transfer, NOC, penalties or ad-hoc charges that don&apos;t apply to every plot.
+        </p>
+        <Field label="Owner / Plot">
+          <select value={plotId} onChange={(e) => setPlotId(e.target.value)} className={inputClass}>
+            <option value="">Select an owner…</option>
+            {plots.map((p) => (
+              <option key={p.dbId} value={p.dbId}>{p.plotNo} · {p.ownerName || "Unassigned"}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Fee">
+          <select value={planId} onChange={(e) => setPlanId(e.target.value)} className={inputClass}>
+            <option value="">Select a fee…</option>
+            {fees.map((f) => (
+              <option key={f.dbId} value={f.dbId}>{feeCategory(f.category).label} · {f.name} · {formatINR(f.amount)}</option>
+            ))}
+          </select>
+        </Field>
+        {fee && (
+          <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            <Badge tone={feeCategory(fee.category).tone}>
+              <Icon name={feeCategory(fee.category).icon} size={11} /> {feeCategory(fee.category).label}
+            </Badge>
+            <span className="ml-auto font-semibold text-slate-800">{formatINR(fee.amount)}</span>
+          </div>
+        )}
+        <Field label="Due date (optional)">
+          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
+        </Field>
+        {(plots.length === 0 || fees.length === 0) && (
+          <p className="text-xs text-amber-600">
+            {fees.length === 0 ? "No active fees yet — add one under Billing → Charges & Fees first." : "No plots/owners found — add owners first."}
+          </p>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function GenerateModal({ open, plans, onClose, onGenerate, saving }) {
+  const [planId, setPlanId] = useState("");
+  const [period, setPeriod] = useState("");
+  const [dueDate, setDueDate] = useState("");
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Generate invoices"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button icon="file-plus" loading={saving} onClick={() => onGenerate({ planId, period, dueDate })}>Generate</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-slate-500">
+          Creates one invoice per active plot for the selected plan. Plots already billed for this plan &amp; period are skipped — so re-running only adds <span className="font-medium text-slate-600">new owners</span>.
+        </p>
+        <Field label="Plan">
+          <select value={planId} onChange={(e) => setPlanId(e.target.value)} className={inputClass}>
+            <option value="">Select a plan…</option>
+            {plans.map((p) => (
+              <option key={p.dbId} value={p.dbId}>{p.name} · {formatINR(p.amount)}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Period (optional)">
+          <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="e.g. Jun 2026 — defaults from the plan's frequency" className={inputClass} />
+        </Field>
+        <Field label="Due date (optional)">
+          <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
+        </Field>
+        {plans.length === 0 && (
+          <p className="text-xs text-amber-600">No active fees yet — create one under Billing → Charges &amp; Fees first.</p>
+        )}
+      </div>
+    </Modal>
   );
 }
 

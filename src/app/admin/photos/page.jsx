@@ -26,7 +26,7 @@ export default function AdminPhotosPage() {
   const toast = useToast();
   const [cat, setCat] = useState("all");
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ category: "Road work", caption: "" });
+  const [form, setForm] = useState({ category: "Road work", customCategory: "", caption: "" });
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -40,16 +40,21 @@ export default function AdminPhotosPage() {
   // Note: real images upload to S3 via /admin/documents/presign; this stores a
   // placeholder URL until AWS keys are configured.
   const upload = async () => {
+    const category = form.category === "Other" ? form.customCategory.trim() : form.category;
+    if (form.category === "Other" && !category) {
+      toast("Enter the photo category", "error");
+      return;
+    }
     const colors = ["10b981", "0ea5e9", "f59e0b", "8b5cf6", "ef4444", "14b8a6"];
     setSaving(true);
     try {
       await api.post("/admin/photos", {
-        url: `https://placehold.co/600x400/${colors[photos.length % colors.length]}/ffffff?text=${encodeURIComponent(form.category)}`,
-        caption: form.caption.trim() || form.category,
-        category: form.category,
+        url: `https://placehold.co/600x400/${colors[photos.length % colors.length]}/ffffff?text=${encodeURIComponent(category)}`,
+        caption: form.caption.trim() || category,
+        category,
       });
       toast("Photo uploaded");
-      setForm({ category: "Road work", caption: "" });
+      setForm({ category: "Road work", customCategory: "", caption: "" });
       setOpen(false);
       reload();
     } catch (e) {
@@ -151,6 +156,11 @@ export default function AdminPhotosPage() {
               ))}
             </select>
           </Field>
+          {form.category === "Other" && (
+            <Field label="Enter category">
+              <input className={inputClass} placeholder="e.g. Clubhouse" value={form.customCategory} onChange={(e) => setForm({ ...form, customCategory: e.target.value })} />
+            </Field>
+          )}
           <Field label="Caption (optional)">
             <input className={inputClass} placeholder="Describe this photo" value={form.caption} onChange={(e) => setForm({ ...form, caption: e.target.value })} />
           </Field>

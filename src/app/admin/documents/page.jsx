@@ -40,7 +40,7 @@ const VISIBILITY = {
   plot: { label: "Specific plot", tone: "violet", icon: "map-pin" },
 };
 
-const emptyForm = { name: "", category: "Legal", url: "", size: "", visibility: "owners", plotNo: "", approved: true };
+const emptyForm = { name: "", category: "Legal", customCategory: "", url: "", size: "", visibility: "owners", plotNo: "", approved: true };
 
 export default function AdminDocumentsPage() {
   const toast = useToast();
@@ -55,13 +55,31 @@ export default function AdminDocumentsPage() {
   const pendingCount = documents.filter((d) => (d.visibility ?? "admin") !== "admin" && !d.approved).length;
 
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null); // document being edited, or null = new
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [approving, setApproving] = useState(null);
 
-  const upload = async () => {
+  const openCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); };
+  const openEdit = (d) => {
+    const known = CATEGORIES.includes(d.category);
+    setEditing(d);
+    setForm({
+      name: d.name ?? "",
+      category: known ? d.category : "Other",
+      customCategory: known ? "" : (d.category ?? ""),
+      url: d.url && d.url !== "#" ? d.url : "",
+      size: d.size && d.size !== "—" ? d.size : "",
+      visibility: d.visibility ?? "admin",
+      plotNo: d.plotNo ?? "",
+      approved: !!d.approved,
+    });
+    setOpen(true);
+  };
+
+  const submit = async () => {
     if (!form.name.trim()) {
       toast("Document name is required", "error");
       return;
@@ -70,26 +88,38 @@ export default function AdminDocumentsPage() {
       toast("Enter the plot number this document belongs to", "error");
       return;
     }
+    const category = form.category === "Other" ? form.customCategory.trim() : form.category;
+    if (form.category === "Other" && !category) {
+      toast("Enter the document category", "error");
+      return;
+    }
     setSaving(true);
     try {
       // Real files upload to S3 via /admin/documents/presign once AWS keys are
       // set; until then we store the provided link (or a placeholder) as metadata.
-      await api.post("/admin/documents", {
+      const payload = {
         name: form.name.trim(),
-        category: form.category,
+        category,
         url: form.url.trim() || "#",
         size: form.size.trim() || "—",
         visibility: form.visibility,
         plotNo: form.visibility === "plot" ? form.plotNo.trim() : null,
         // Admin-only docs are never owner-facing, so approval is moot there.
         approved: form.visibility === "admin" ? false : form.approved,
-      });
-      toast(`${form.name.trim()} added`);
+      };
+      if (editing) {
+        await api.put(`/admin/documents/${editing.dbId}`, payload);
+        toast(`${payload.name} updated`);
+      } else {
+        await api.post("/admin/documents", payload);
+        toast(`${payload.name} added`);
+      }
       setForm(emptyForm);
+      setEditing(null);
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not add document", "error");
+      toast(e.message || "Could not save document", "error");
     } finally {
       setSaving(false);
     }
@@ -138,7 +168,7 @@ export default function AdminDocumentsPage() {
       <PageHeader
         title="Documents"
         subtitle="Association records · control who can view each one"
-        actions={<Button icon="upload" onClick={() => { setForm(emptyForm); setOpen(true); }}>Upload document</Button>}
+        actions={<Button icon="upload" onClick={openCreate}>Upload document</Button>}
       />
 
       <Card>
@@ -215,6 +245,9 @@ export default function AdminDocumentsPage() {
                     <button onClick={() => openFile(d)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100" title="Open">
                       <Icon name="eye" size={15} />
                     </button>
+                    <button onClick={() => openEdit(d)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100" title="Edit">
+                      <Icon name="pencil" size={15} />
+                    </button>
                     <button onClick={() => setConfirmDelete(d)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Delete">
                       <Icon name="trash-2" size={15} />
                     </button>
@@ -231,21 +264,23 @@ export default function AdminDocumentsPage() {
       {/* Upload / add document */}
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
-        title="Upload document"
+        onClose={() => { setOpen(false); setEditing(null); }}
+        title={editing ? "Edit document" : "Upload document"}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button icon="upload" loading={saving} onClick={upload}>Save document</Button>
+            <Button variant="secondary" onClick={() => { setOpen(false); setEditing(null); }}>Cancel</Button>
+            <Button icon={editing ? "save" : "upload"} loading={saving} onClick={submit}>{editing ? "Save changes" : "Save document"}</Button>
           </>
         }
       >
         <div className="space-y-4">
-          <div className="grid place-items-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-8 text-center">
-            <Icon name="file-up" size={26} className="text-slate-400" />
-            <p className="mt-2 text-sm font-medium text-slate-600">Drag &amp; drop or paste a link below</p>
-            <p className="text-xs text-slate-400">PDF, DOCX, XLSX up to 25 MB</p>
-          </div>
+          {!editing && (
+            <div className="grid place-items-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-8 text-center">
+              <Icon name="file-up" size={26} className="text-slate-400" />
+              <p className="mt-2 text-sm font-medium text-slate-600">Drag &amp; drop or paste a link below</p>
+              <p className="text-xs text-slate-400">PDF, DOCX, XLSX up to 25 MB</p>
+            </div>
+          )}
           <Field label="Document name">
             <input className={inputClass} placeholder="e.g. Society bylaws 2025" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </Field>
@@ -257,10 +292,21 @@ export default function AdminDocumentsPage() {
                 ))}
               </select>
             </Field>
+            {form.category === "Other" ? (
+              <Field label="Enter category">
+                <input className={inputClass} placeholder="e.g. Insurance" value={form.customCategory} onChange={(e) => setForm({ ...form, customCategory: e.target.value })} />
+              </Field>
+            ) : (
+              <Field label="Size (optional)">
+                <input className={inputClass} placeholder="e.g. 2.4 MB" value={form.size} onChange={(e) => setForm({ ...form, size: e.target.value })} />
+              </Field>
+            )}
+          </div>
+          {form.category === "Other" && (
             <Field label="Size (optional)">
               <input className={inputClass} placeholder="e.g. 2.4 MB" value={form.size} onChange={(e) => setForm({ ...form, size: e.target.value })} />
             </Field>
-          </div>
+          )}
           <Field label="File link (optional)" hint="Paste a shareable URL until file storage is configured">
             <input className={inputClass} placeholder="https://…" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
           </Field>

@@ -73,6 +73,7 @@ export function AuthProvider({ children }) {
           title: info.title,
           plotNo: info.plotNo,
           guardId: info.guardId,
+          avatarUrl: info.avatarUrl,
         });
       } catch (e) {
         return { ok: false, error: e.message || "Invalid email or password." };

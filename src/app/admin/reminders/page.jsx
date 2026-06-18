@@ -54,18 +54,29 @@ export default function RemindersPage() {
       const { data: plots } = await api.get("/admin/plots", { status: "pending", page_size: 300 });
       const status = when === "now" ? "sent" : "scheduled";
       const targets = normalizeList(plots).slice(0, 50);
-      await Promise.all(
+      const results = await Promise.all(
         targets.flatMap((p) =>
           selectedChannels.map((ch) =>
             api.post("/admin/reminders", {
               plotNo: p.plotNo, ownerName: p.ownerName, amount: p.amountDue,
-              channel: ch, status,
-            }),
+              channel: ch, status, email: p.email || undefined,
+            }).then(({ data }) => data?.delivery).catch(() => null),
           ),
         ),
       );
       const via = selectedChannels.length > 1 ? `${selectedChannels.length} channels` : (channels.find((c) => c.id === selectedChannels[0])?.label ?? selectedChannels[0]);
-      toast(`Reminder ${status === "sent" ? "sent" : "scheduled"} for ${recipientCount} owners via ${via}`);
+      // Count real email sends + failures so the admin knows what actually went out.
+      if (selectedChannels.includes("email") && status === "sent") {
+        const emailed = results.filter((d) => d?.channel === "email" && d?.sent).length;
+        const failed = results.filter((d) => d?.channel === "email" && d?.ok === false).length;
+        toast(
+          `Reminder ${status === "sent" ? "sent" : "scheduled"} for ${recipientCount} owners via ${via}` +
+            (emailed ? ` · ${emailed} emailed` : "") + (failed ? ` · ${failed} email(s) failed (check Settings → Email)` : ""),
+          failed && !emailed ? "error" : "success",
+        );
+      } else {
+        toast(`Reminder ${status === "sent" ? "sent" : "scheduled"} for ${recipientCount} owners via ${via}`);
+      }
       setConfirmOpen(false);
       reload();
     } catch (e) {

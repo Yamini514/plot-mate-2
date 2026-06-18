@@ -6,8 +6,10 @@ import {
   Card,
   CardHeader,
   Button,
+  Badge,
   Field,
   inputClass,
+  PasswordInput,
   Avatar,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
@@ -30,8 +32,29 @@ const tabs = [
   { id: "fees", label: "Fees & Dues", icon: "indian-rupee" },
   { id: "committee", label: "Committee", icon: "users" },
   { id: "bank", label: "Bank & UPI", icon: "landmark" },
+  { id: "email", label: "Email / SMTP", icon: "mail-check" },
   { id: "helplines", label: "Helplines", icon: "phone-call" },
   { id: "notifications", label: "Notifications", icon: "bell" },
+];
+
+// One-click SMTP presets for common providers. "custom" leaves fields untouched.
+const SMTP_PRESETS = {
+  custom:    { label: "Custom / Other" },
+  gmail:     { label: "Gmail / Google Workspace", host: "smtp.gmail.com",        port: 587, security: "starttls", note: "Use an App Password (not your login password) with 2-step verification on." },
+  office365: { label: "Outlook / Microsoft 365",  host: "smtp.office365.com",    port: 587, security: "starttls", note: "Username is your full email address." },
+  sendgrid:  { label: "SendGrid",                 host: "smtp.sendgrid.net",     port: 587, security: "starttls", username: "apikey", note: "Username is literally \"apikey\"; password is your API key." },
+  ses:       { label: "Amazon SES",               host: "email-smtp.ap-south-1.amazonaws.com", port: 587, security: "starttls", note: "Use your SES SMTP credentials (not your AWS keys)." },
+  mailgun:   { label: "Mailgun",                  host: "smtp.mailgun.org",      port: 587, security: "starttls" },
+  zoho:      { label: "Zoho Mail",                host: "smtp.zoho.in",          port: 465, security: "ssl" },
+  brevo:     { label: "Brevo (Sendinblue)",       host: "smtp-relay.brevo.com",  port: 587, security: "starttls" },
+  mailtrap:  { label: "Mailtrap (sandbox / test)", host: "sandbox.smtp.mailtrap.io", port: 2525, security: "starttls", sandbox: true, note: "Free sandbox for testing: create an inbox at mailtrap.io → SMTP Settings, paste the username & password here. Emails are captured in Mailtrap (not delivered to real owners)." },
+  mailpit:   { label: "Local catcher (Mailpit / MailHog)", host: "localhost", port: 1025, security: "none", sandbox: true, note: "Run a local SMTP catcher (e.g. Mailpit) — no username/password needed. Every email is captured at http://localhost:8025." },
+};
+
+const SECURITY_OPTIONS = [
+  { value: "starttls", label: "STARTTLS (587)" },
+  { value: "ssl", label: "SSL / TLS (465)" },
+  { value: "none", label: "None (no encryption)" },
 ];
 
 const initialChannels = [
@@ -81,7 +104,9 @@ export default function SettingsPage() {
         location: live.location ?? "",
         totalPlots: live.totalPlots ?? "",
         fy: live.fy ?? currentFY(),
+        basePayMode: live.basePayMode ?? "per_sqyd",
         ratePerSqyd: live.ratePerSqyd ?? "",
+        basePayFlat: live.basePayFlat ?? "",
         membershipFee: live.membershipFee ?? "",
         latePenaltyPct: live.latePenaltyPct ?? "",
         dueDate: live.dueDate ?? "",
@@ -95,6 +120,16 @@ export default function SettingsPage() {
         qrImageUrl: live.bank?.qrImageUrl ?? "",
         committee: toCommitteeArray(live.committee, DEFAULT_COMMITTEE),
         helplines: Array.isArray(live.helplines) ? live.helplines : [],
+        // SMTP — password is never sent back; we only know whether one is set.
+        smtpEnabled: live.smtp?.enabled ?? false,
+        smtpHost: live.smtp?.host ?? "",
+        smtpPort: live.smtp?.port ?? "",
+        smtpSecurity: live.smtp?.security ?? "starttls",
+        smtpUsername: live.smtp?.username ?? "",
+        smtpPassword: "",
+        smtpPasswordSet: live.smtp?.passwordSet ?? false,
+        smtpFromName: live.smtp?.fromName ?? "",
+        smtpFromEmail: live.smtp?.fromEmail ?? "",
       });
     }
   }, [live, form]);
@@ -113,6 +148,74 @@ export default function SettingsPage() {
     reader.onerror = () => toast("Couldn't read that image", "error");
     reader.readAsDataURL(file);
   };
+
+  // --- SMTP / email config ---
+  const [provider, setProvider] = useState("custom");
+  const [testTo, setTestTo] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState(null);
+
+  const smtpPayload = () => ({
+    enabled: !!f.smtpEnabled,
+    host: (f.smtpHost || "").trim(),
+    port: Number(f.smtpPort) || 0,
+    security: f.smtpSecurity || "starttls",
+    username: (f.smtpUsername || "").trim(),
+    password: f.smtpPassword || "",
+    fromName: (f.smtpFromName || "").trim(),
+    fromEmail: (f.smtpFromEmail || "").trim(),
+  });
+
+  const applyPreset = (key) => {
+    setProvider(key);
+    const p = SMTP_PRESETS[key];
+    if (!p || key === "custom") return;
+    setForm((prev) => ({
+      ...prev,
+      smtpHost: p.host ?? prev.smtpHost,
+      smtpPort: p.port ?? prev.smtpPort,
+      smtpSecurity: p.security ?? prev.smtpSecurity,
+      smtpUsername: p.username ?? prev.smtpUsername,
+    }));
+  };
+
+  const sendTest = async () => {
+    setTesting(true);
+    setPreview(null);
+    try {
+      const { data } = await api.post("/admin/settings/test-email", { to: testTo || undefined, smtp: smtpPayload() });
+      toast(data?.message || "Test email sent", "success");
+    } catch (e) {
+      toast(e.message || "Could not send test email", "error");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  // Render the email without sending (zero setup) — proves the pipeline works.
+  const previewEmail = async () => {
+    setPreviewing(true);
+    setPreview(null);
+    try {
+      const { data } = await api.post("/admin/settings/test-email", {
+        to: testTo || undefined,
+        smtp: { ...smtpPayload(), security: "preview" },
+      });
+      if (data?.preview) {
+        setPreview(data.preview);
+        toast("Preview generated — not actually sent", "success");
+      } else {
+        toast(data?.message || "Preview generated", "success");
+      }
+    } catch (e) {
+      toast(e.message || "Could not generate preview", "error");
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const smtpConfigured = !!((f.smtpHost || "").trim() && (f.smtpUsername || "").trim() && (f.smtpPasswordSet || f.smtpPassword));
   const committee = f.committee ?? [];
   const addMember = () => setForm((p) => ({ ...p, committee: [...(p.committee ?? []), { role: "", name: "", phone: "" }] }));
   const updateMember = (i, key, val) => setForm((p) => ({ ...p, committee: (p.committee ?? []).map((m, idx) => (idx === i ? { ...m, [key]: val } : m)) }));
@@ -132,7 +235,9 @@ export default function SettingsPage() {
         name: f.name, type: f.type, registrationNo: f.registrationNo, location: f.location,
         totalPlots: Number(f.totalPlots) || 0,
         fy: f.fy,
+        basePayMode: f.basePayMode === "per_plot" ? "per_plot" : "per_sqyd",
         ratePerSqyd: Number(f.ratePerSqyd) || 0,
+        basePayFlat: Number(f.basePayFlat) || 0,
         membershipFee: Number(f.membershipFee) || 0,
         latePenaltyPct: Number(f.latePenaltyPct) || 0,
         dueDate: f.dueDate || "",
@@ -142,7 +247,20 @@ export default function SettingsPage() {
         },
         committee: committee.filter((m) => (m.name || "").trim() || (m.role || "").trim()),
         helplines: helplines.filter((h) => (h.label || "").trim() || (h.phone || "").trim()),
+        smtp: {
+          enabled: !!f.smtpEnabled,
+          host: (f.smtpHost || "").trim(),
+          port: Number(f.smtpPort) || 0,
+          security: f.smtpSecurity || "starttls",
+          username: (f.smtpUsername || "").trim(),
+          // Blank password = keep the stored one (backend preserves it).
+          password: f.smtpPassword || "",
+          fromName: (f.smtpFromName || "").trim(),
+          fromEmail: (f.smtpFromEmail || "").trim(),
+        },
       });
+      // Clear the password field after save; the stored one is now set.
+      setForm((p) => ({ ...p, smtpPassword: "", smtpPasswordSet: p.smtpPasswordSet || !!p.smtpPassword }));
       toast("Settings saved");
     } catch (e) {
       toast(e.message || "Could not save settings", "error");
@@ -208,20 +326,60 @@ export default function SettingsPage() {
 
           {tab === "fees" && (
             <Card>
-              <CardHeader title="Maintenance fees" icon="indian-rupee" />
-              <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
-                <Field label="Rate per sqyd / year (₹)">
-                  <input type="number" className={inputClass} value={f.ratePerSqyd ?? ""} onChange={(e) => set("ratePerSqyd", e.target.value)} />
-                </Field>
-                <Field label="One-time membership fee (₹)">
-                  <input type="number" className={inputClass} value={f.membershipFee ?? ""} onChange={(e) => set("membershipFee", e.target.value)} />
-                </Field>
-                <Field label="Late payment penalty (%)">
-                  <input type="number" className={inputClass} value={f.latePenaltyPct ?? ""} onChange={(e) => set("latePenaltyPct", e.target.value)} />
-                </Field>
-                <Field label="Due date">
-                  <input type="date" className={inputClass} value={f.dueDate ?? ""} onChange={(e) => set("dueDate", e.target.value)} />
-                </Field>
+              <CardHeader title="Base pay & maintenance" subtitle="How each plot's base maintenance due is calculated — used by Plot Owners → Apply base pay" icon="indian-rupee" />
+              <div className="p-5">
+                {/* Base-pay mode — drives the per-plot due calculation */}
+                <span className="mb-1.5 block text-xs font-medium text-slate-600">Base pay basis</span>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {[
+                    { value: "per_sqyd", label: "Per unit (per sqyd)", hint: "Due = plot size × rate. Bigger plots pay more.", icon: "ruler" },
+                    { value: "per_plot", label: "Per plot (flat)", hint: "Every plot pays the same flat amount, regardless of size.", icon: "square" },
+                  ].map((m) => {
+                    const on = (f.basePayMode ?? "per_sqyd") === m.value;
+                    return (
+                      <button
+                        key={m.value}
+                        type="button"
+                        onClick={() => set("basePayMode", m.value)}
+                        className={`flex items-start gap-3 rounded-xl border p-3 text-left transition-colors ${on ? "border-brand-300 bg-brand-50" : "border-slate-200 bg-white hover:border-slate-300"}`}
+                      >
+                        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${on ? "bg-brand-100 text-brand-600" : "bg-slate-100 text-slate-500"}`}>
+                          <Icon name={m.icon} size={18} />
+                        </span>
+                        <span>
+                          <span className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
+                            {on && <Icon name="check" size={13} className="text-brand-600" />}{m.label}
+                          </span>
+                          <span className="mt-0.5 block text-xs text-slate-400">{m.hint}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {(f.basePayMode ?? "per_sqyd") === "per_plot" ? (
+                    <Field label="Flat base pay per plot (₹)" hint="Charged to every plot when you apply base pay">
+                      <input type="number" min="0" className={inputClass} value={f.basePayFlat ?? ""} onChange={(e) => set("basePayFlat", e.target.value)} placeholder="e.g. 6000" />
+                    </Field>
+                  ) : (
+                    <Field label="Rate per sqyd / year (₹)" hint="Multiplied by each plot's size">
+                      <input type="number" min="0" className={inputClass} value={f.ratePerSqyd ?? ""} onChange={(e) => set("ratePerSqyd", e.target.value)} placeholder="e.g. 30" />
+                    </Field>
+                  )}
+                  <Field label="One-time membership fee (₹)">
+                    <input type="number" className={inputClass} value={f.membershipFee ?? ""} onChange={(e) => set("membershipFee", e.target.value)} />
+                  </Field>
+                  <Field label="Late payment penalty (%)">
+                    <input type="number" className={inputClass} value={f.latePenaltyPct ?? ""} onChange={(e) => set("latePenaltyPct", e.target.value)} />
+                  </Field>
+                  <Field label="Due date">
+                    <input type="date" className={inputClass} value={f.dueDate ?? ""} onChange={(e) => set("dueDate", e.target.value)} />
+                  </Field>
+                </div>
+                <p className="mt-3 flex items-start gap-1.5 text-xs text-slate-400">
+                  <Icon name="info" size={13} className="mt-0.5 shrink-0" /> Changing this doesn’t re-bill anyone automatically. Go to <b className="font-medium text-slate-600">Plot Owners → Apply base pay</b> to (re)generate dues at the new rate.
+                </p>
               </div>
             </Card>
           )}
@@ -352,6 +510,141 @@ export default function SettingsPage() {
                     <Icon name="info" size={13} /> Remember to “Save changes”.
                   </p>
                 </div>
+              </div>
+            </Card>
+          )}
+
+          {tab === "email" && (
+            <Card>
+              <CardHeader
+                title="Email / SMTP"
+                subtitle="Send password resets, reminders and receipts from your own mail server"
+                icon="mail-check"
+                action={
+                  smtpConfigured ? (
+                    <Badge tone={f.smtpEnabled ? "green" : "amber"}>
+                      <Icon name={f.smtpEnabled ? "circle-check-big" : "pause"} size={11} />
+                      {f.smtpEnabled ? "Active" : "Configured · off"}
+                    </Badge>
+                  ) : (
+                    <Badge tone="slate"><Icon name="circle-dashed" size={11} /> Not configured</Badge>
+                  )
+                }
+              />
+              <div className="space-y-5 p-5">
+                {/* Enable toggle */}
+                <div className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">Enable email sending</p>
+                    <p className="text-xs text-slate-400">When off, the app won’t attempt to send any emails.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => set("smtpEnabled", !f.smtpEnabled)}
+                    className={`relative h-6 w-11 rounded-full transition-colors ${f.smtpEnabled ? "bg-brand-500" : "bg-slate-200"}`}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${f.smtpEnabled ? "left-[22px]" : "left-0.5"}`} />
+                  </button>
+                </div>
+
+                {/* Provider preset */}
+                <Field label="Provider preset" hint="Pick a provider to auto-fill host, port and security — then add your credentials.">
+                  <select className={inputClass} value={provider} onChange={(e) => applyPreset(e.target.value)}>
+                    {Object.entries(SMTP_PRESETS).map(([k, p]) => (
+                      <option key={k} value={k}>{p.label}</option>
+                    ))}
+                  </select>
+                </Field>
+                {SMTP_PRESETS[provider]?.note && (
+                  <p className="-mt-2 flex items-start gap-1.5 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                    <Icon name="info" size={13} className="mt-0.5 shrink-0" /> {SMTP_PRESETS[provider].note}
+                  </p>
+                )}
+
+                {/* From identity */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="From name" hint="Shown as the sender">
+                    <input className={inputClass} value={f.smtpFromName ?? ""} onChange={(e) => set("smtpFromName", e.target.value)} placeholder={f.name || "Your Association"} />
+                  </Field>
+                  <Field label="From email">
+                    <input type="email" className={inputClass} value={f.smtpFromEmail ?? ""} onChange={(e) => set("smtpFromEmail", e.target.value)} placeholder="noreply@yourdomain.com" />
+                  </Field>
+                </div>
+
+                {/* Server */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="SMTP host">
+                    <input className={inputClass} value={f.smtpHost ?? ""} onChange={(e) => set("smtpHost", e.target.value)} placeholder="smtp.yourprovider.com" />
+                  </Field>
+                  <Field label="Port">
+                    <input type="number" className={inputClass} value={f.smtpPort ?? ""} onChange={(e) => set("smtpPort", e.target.value)} placeholder="587" />
+                  </Field>
+                  <Field label="Security">
+                    <select className={inputClass} value={f.smtpSecurity ?? "starttls"} onChange={(e) => set("smtpSecurity", e.target.value)}>
+                      {SECURITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Username">
+                    <input className={inputClass} value={f.smtpUsername ?? ""} onChange={(e) => set("smtpUsername", e.target.value)} placeholder="full email or API user" autoComplete="off" />
+                  </Field>
+                  <div className="sm:col-span-2">
+                    <Field label="Password" hint={f.smtpPasswordSet ? "A password is saved — leave blank to keep it." : "SMTP password or API key."}>
+                      <PasswordInput
+                        value={f.smtpPassword ?? ""}
+                        onChange={(e) => set("smtpPassword", e.target.value)}
+                        placeholder={f.smtpPasswordSet ? "•••••••• (unchanged)" : "SMTP password / API key"}
+                      />
+                    </Field>
+                  </div>
+                </div>
+
+                {/* Test & verify */}
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <p className="text-sm font-medium text-slate-800">Test &amp; verify</p>
+                  <p className="mb-2 text-xs text-slate-400">
+                    <b>Preview</b> renders the email without sending (no setup needed). <b>Send test</b> delivers it for real via the settings above.
+                  </p>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="email"
+                      className={inputClass}
+                      value={testTo}
+                      onChange={(e) => setTestTo(e.target.value)}
+                      placeholder={`recipient@example.com (defaults to ${live?.email || "your email"})`}
+                    />
+                    <Button variant="secondary" icon="eye" loading={previewing} onClick={previewEmail} className="shrink-0">Preview</Button>
+                    <Button icon="send" loading={testing} onClick={sendTest} className="shrink-0">Send test</Button>
+                  </div>
+
+                  {SMTP_PRESETS[provider]?.sandbox && (
+                    <p className="mt-2 flex items-start gap-1.5 text-xs text-emerald-700">
+                      <Icon name="flask-conical" size={13} className="mt-0.5 shrink-0" />
+                      Sandbox provider selected — test emails are captured, not delivered to real owners. Great for checking that mailing works.
+                    </p>
+                  )}
+
+                  {/* Rendered preview */}
+                  {preview && (
+                    <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                      <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        <span className="flex items-center gap-1.5"><Icon name="eye" size={12} /> Preview · not sent</span>
+                        <button onClick={() => setPreview(null)} className="text-slate-400 hover:text-slate-600"><Icon name="x" size={14} /></button>
+                      </div>
+                      <div className="space-y-1 px-3 py-2 text-xs text-slate-500">
+                        <p><span className="text-slate-400">To:</span> {preview.to}</p>
+                        <p><span className="text-slate-400">From:</span> {preview.from}</p>
+                        <p><span className="text-slate-400">Subject:</span> <span className="font-medium text-slate-700">{preview.subject}</span></p>
+                      </div>
+                      {/* Admin-only, server-rendered from our own template */}
+                      <div className="border-t border-slate-100 px-4 py-3 text-sm text-slate-700 [&_a]:text-brand-600" dangerouslySetInnerHTML={{ __html: preview.html }} />
+                    </div>
+                  )}
+                </div>
+
+                <p className="flex items-start gap-1.5 text-xs text-slate-400">
+                  <Icon name="shield-check" size={13} className="mt-0.5 shrink-0" />
+                  Your password is stored on the server and never sent back to the browser. Prefer a dedicated app password or API key over your main login.
+                </p>
               </div>
             </Card>
           )}

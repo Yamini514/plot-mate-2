@@ -189,7 +189,7 @@ export function AppShell({ nav, role, children }) {
       {/* User card */}
       <div className="border-t border-slate-100 p-3">
         <div className="flex items-center gap-3 rounded-lg px-2 py-2">
-          <Avatar name={user.name} size={36} />
+          <Avatar name={user.name} src={user.avatarUrl} size={36} />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-slate-800">{user.name}</p>
             <p className="truncate text-xs text-slate-400">{user.title}</p>
@@ -400,7 +400,7 @@ export function AppShell({ nav, role, children }) {
               )}
             </div>
             <span className="ml-1 hidden items-center gap-2 rounded-lg py-1 pl-1 pr-3 sm:flex">
-              <Avatar name={user.name} size={32} />
+              <Avatar name={user.name} src={user.avatarUrl} size={32} />
               <span className="text-sm font-medium text-slate-700">
                 {user.name.split(" ")[0]}
               </span>

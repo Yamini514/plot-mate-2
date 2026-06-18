@@ -14,20 +14,43 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { FREQUENCIES, PROPERTY_TYPES } from "@/lib/billing-data";
+import { FREQUENCIES, PROPERTY_TYPES, FEE_CATEGORIES, feeCategory } from "@/lib/billing-data";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { formatINR } from "@/lib/utils";
 
 const freqLabel = (v) => FREQUENCIES.find((f) => f.value === v)?.label ?? v;
 
+// Category tone → icon-tile colour (mirrors the Badge tone palette).
+const TILE_TONES = {
+  brand: "bg-brand-50 text-brand-600",
+  green: "bg-emerald-50 text-emerald-600",
+  amber: "bg-amber-50 text-amber-600",
+  rose: "bg-rose-50 text-rose-600",
+  sky: "bg-sky-50 text-sky-600",
+  violet: "bg-violet-50 text-violet-600",
+  slate: "bg-slate-100 text-slate-600",
+};
+
 export default function MaintenancePlans() {
   const toast = useToast();
   const { data: raw, reload } = useApi("/admin/billing/plans");
   const rows = normalizeList(raw);
+  const [catFilter, setCatFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [category, setCategory] = useState("maintenance");
   const [types, setTypes] = useState(PROPERTY_TYPES);
+
+  // Per-category counts for the filter chips; only show chips that have fees
+  // (plus an always-present "All"), so the strip stays relevant as it scales.
+  const catCounts = rows.reduce((acc, p) => {
+    const k = p.category || "maintenance";
+    acc[k] = (acc[k] ?? 0) + 1;
+    return acc;
+  }, {});
+  const visibleCats = FEE_CATEGORIES.filter((c) => catCounts[c.value]);
+  const filtered = catFilter === "all" ? rows : rows.filter((p) => (p.category || "maintenance") === catFilter);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -35,11 +58,13 @@ export default function MaintenancePlans() {
 
   const openCreate = () => {
     setEditing(null);
+    setCategory(catFilter === "all" ? "maintenance" : catFilter);
     setTypes(PROPERTY_TYPES);
     setOpen(true);
   };
   const openEdit = (p) => {
     setEditing(p);
+    setCategory(p.category || "maintenance");
     setTypes(p.propertyTypes);
     setOpen(true);
   };
@@ -79,8 +104,9 @@ export default function MaintenancePlans() {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const data = {
-      name: f.get("name") || "Untitled plan",
+      name: f.get("name") || "Untitled fee",
       description: f.get("description") || "",
+      category: f.get("category") || "maintenance",
       amount: Number(f.get("amount")) || 0,
       frequency: f.get("frequency"),
       dueDay: Number(f.get("dueDay")) || 1,
@@ -109,20 +135,35 @@ export default function MaintenancePlans() {
 
   return (
     <div className="animate-fade-in">
-      <Breadcrumbs items={[{ label: "PlotMate", href: "/admin/billing" }, { label: "Billing" }, { label: "Maintenance Plans" }]} />
+      <Breadcrumbs items={[{ label: "PlotMate", href: "/admin/billing" }, { label: "Billing" }, { label: "Charges & Fees" }]} />
       <PageHeader
-        title="Maintenance Plans"
-        subtitle="Define recurring & one-time charges with auto-invoice rules"
-        actions={<Button icon="plus" onClick={openCreate}>New plan</Button>}
+        title="Charges & Fees"
+        subtitle="Maintenance, corpus funds, transfer & NOC, penalties, water, amenities — every charge your community bills"
+        actions={<Button icon="plus" onClick={openCreate}>New fee</Button>}
       />
 
+      {/* Category filter strip — scales as more fee types are added */}
+      {rows.length > 0 && (
+        <div className="mb-5 flex flex-wrap gap-2">
+          <CatChip active={catFilter === "all"} onClick={() => setCatFilter("all")} icon="layout-grid" label="All" count={rows.length} />
+          {visibleCats.map((c) => (
+            <CatChip key={c.value} active={catFilter === c.value} onClick={() => setCatFilter(c.value)} icon={c.icon} label={c.label} count={catCounts[c.value]} />
+          ))}
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <Card className="p-10 text-center text-sm text-slate-400">
+          No fees in this category yet. Click <span className="font-medium text-slate-600">New fee</span> to add one.
+        </Card>
+      ) : (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {rows.map((p) => (
+        {filtered.map((p) => (
           <Card key={p.id} className="flex flex-col p-5">
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-3">
-                <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-50 text-brand-600">
-                  <Icon name="scroll-text" size={20} />
+                <span className={`grid h-10 w-10 place-items-center rounded-xl ${TILE_TONES[feeCategory(p.category).tone]}`}>
+                  <Icon name={feeCategory(p.category).icon} size={20} />
                 </span>
                 <div>
                   <h3 className="text-sm font-semibold text-slate-800">{p.name}</h3>
@@ -130,6 +171,12 @@ export default function MaintenancePlans() {
                 </div>
               </div>
               <Badge tone={p.active ? "green" : "slate"}>{p.active ? "Active" : "Inactive"}</Badge>
+            </div>
+
+            <div className="mt-3">
+              <Badge tone={feeCategory(p.category).tone}>
+                <Icon name={feeCategory(p.category).icon} size={11} /> {feeCategory(p.category).label}
+              </Badge>
             </div>
 
             <p className="mt-3 line-clamp-2 text-xs text-slate-500">{p.description}</p>
@@ -169,24 +216,37 @@ export default function MaintenancePlans() {
           </Card>
         ))}
       </div>
+      )}
 
       {/* Create / edit modal */}
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title={editing ? `Edit · ${editing.name}` : "New Maintenance Plan"}
+        title={editing ? `Edit · ${editing.name}` : "New fee"}
         wide
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="plan-form" icon="check" loading={saving}>{editing ? "Save changes" : "Create plan"}</Button>
+            <Button type="submit" form="plan-form" icon="check" loading={saving}>{editing ? "Save changes" : "Create fee"}</Button>
           </>
         }
       >
         <form id="plan-form" onSubmit={save} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field label="Plan name">
-              <input name="name" required defaultValue={editing?.name} className={inputClass} placeholder="e.g. Monthly Maintenance" />
+            <Field label="Fee category">
+              <select name="category" value={category} onChange={(e) => setCategory(e.target.value)} className={inputClass}>
+                {FEE_CATEGORIES.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </Field>
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
+              <Icon name={feeCategory(category).icon} size={12} /> {feeCategory(category).hint}
+            </p>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label="Fee name">
+              <input name="name" required defaultValue={editing?.name} className={inputClass} placeholder="e.g. Monthly Maintenance, Plot Transfer Fee" />
             </Field>
           </div>
           <div className="sm:col-span-2">
@@ -250,5 +310,23 @@ export default function MaintenancePlans() {
         message={`Delete the "${confirmDelete?.name}" plan? Invoices already generated from it are kept, but it can no longer be applied to owners.`}
       />
     </div>
+  );
+}
+
+function CatChip({ active, onClick, icon, label, count }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors ${
+        active
+          ? "border-brand-300 bg-brand-50 text-brand-700"
+          : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+      }`}
+    >
+      <Icon name={icon} size={14} />
+      {label}
+      <span className={`rounded-full px-1.5 text-xs ${active ? "bg-brand-100 text-brand-700" : "bg-slate-100 text-slate-500"}`}>{count}</span>
+    </button>
   );
 }

@@ -23,11 +23,12 @@ import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
+import { AvatarUpload } from "@/components/AvatarUpload";
 import { formatINR, formatDate, validateAccount } from "@/lib/utils";
 
 const emptyForm = {
   name: "", role: "", phone: "", monthlySalary: "", joinedOn: "", type: "staff", status: "active",
-  createLogin: false, email: "", password: "", confirmPassword: "",
+  createLogin: false, email: "", password: "", confirmPassword: "", avatarUrl: "",
 };
 
 export default function StaffPage() {
@@ -99,6 +100,7 @@ export default function StaffPage() {
             role: 1, // guard / security
             phoneNumber: form.phone.trim() || null,
             active: true,
+            avatarUrl: form.avatarUrl || null,
             extras: { title: form.role.trim() },
           });
         }
@@ -276,6 +278,10 @@ export default function StaffPage() {
             </label>
             {form.createLogin && (
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <span className="mb-1.5 block text-xs font-medium text-slate-600">Staff photo</span>
+                  <AvatarUpload value={form.avatarUrl} onChange={(url) => setForm({ ...form, avatarUrl: url })} name={form.name} />
+                </div>
                 <Field label="Login email">
                   <input type="email" className={inputClass} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="guard@greenaeroview.in" />
                 </Field>
