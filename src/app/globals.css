@@ -71,3 +71,33 @@ body {
     transform: translateX(0);
   }
 }
+
+/* Print: isolate the payment slip. Everything else is hidden and the slip is
+ * laid out full-width at the top of the page for a clean PDF / print. The slip
+ * carries `.slip-print`; chrome (modal header, controls, footer) carries
+ * `.no-print`. */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  .slip-print,
+  .slip-print * {
+    visibility: visible !important;
+  }
+  .slip-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  @page {
+    margin: 14mm;
+  }
+}

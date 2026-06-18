@@ -12,7 +12,9 @@ import {
   EmptyState,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { complaints, getMemberOwner } from "@/lib/mock-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+import { useToast } from "@/components/Toast";
 
 const catIcon = {
   Roads: "construction",
@@ -23,12 +25,39 @@ const catIcon = {
   Other: "circle-help",
 };
 
+const emptyForm = { title: "", category: "Roads", priority: "medium", description: "" };
+
 export default function MemberComplaintsPage() {
-  const me = getMemberOwner();
+  const { data: raw, reload } = useApi("/member/complaints");
+  const list = normalizeList(raw); // backend returns this member's own
+  const toast = useToast();
   const [open, setOpen] = useState(false);
-  // show this member's complaints + a couple community ones
-  const mine = complaints.filter((c) => c.plotNo === me.plotNo);
-  const list = mine.length ? mine : complaints.slice(0, 3);
+  const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!form.title.trim()) {
+      toast("Please add a title", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post("/member/complaints", {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        category: form.category,
+        priority: form.priority,
+      });
+      toast("Complaint raised — the committee has been notified");
+      setForm(emptyForm);
+      setOpen(false);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not raise complaint", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="animate-fade-in">
@@ -80,24 +109,24 @@ export default function MemberComplaintsPage() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button icon="send" onClick={() => setOpen(false)}>Submit</Button>
+            <Button icon="send" loading={saving} onClick={submit}>Submit</Button>
           </>
         }
       >
         <div className="space-y-4">
           <Field label="Title">
-            <input className={inputClass} placeholder="Brief summary of the issue" />
+            <input className={inputClass} placeholder="Brief summary of the issue" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Category">
-              <select className={inputClass}>
+              <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                 {["Roads", "Water", "Electricity", "Security", "Cleanliness", "Other"].map((c) => (
                   <option key={c}>{c}</option>
                 ))}
               </select>
             </Field>
             <Field label="Priority">
-              <select className={inputClass}>
+              <select className={inputClass} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
                 <option>low</option>
                 <option>medium</option>
                 <option>high</option>
@@ -105,7 +134,7 @@ export default function MemberComplaintsPage() {
             </Field>
           </div>
           <Field label="Description">
-            <textarea rows={4} className={inputClass} placeholder="Describe the issue in detail…" />
+            <textarea rows={4} className={inputClass} placeholder="Describe the issue in detail…" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </Field>
         </div>
       </Modal>

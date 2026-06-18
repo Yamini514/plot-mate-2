@@ -10,20 +10,26 @@ import {
   Modal,
   Field,
   inputClass,
+  ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { useStore, newId } from "@/lib/store";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
 
 const UPLOAD_CATEGORIES = ["Road work", "Street lights", "Compound wall", "Plantation", "Drainage", "Other"];
 
 export default function AdminPhotosPage() {
-  const { photos, addPhoto } = useStore();
+  const { data: raw, reload } = useApi("/admin/photos");
+  const photos = normalizeList(raw);
   const toast = useToast();
   const [cat, setCat] = useState("all");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ category: "Road work", caption: "" });
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const categories = useMemo(
     () => ["all", ...Array.from(new Set(photos.map((p) => p.category)))],
@@ -31,18 +37,41 @@ export default function AdminPhotosPage() {
   );
   const filtered = photos.filter((p) => cat === "all" || p.category === cat);
 
-  const upload = () => {
+  // Note: real images upload to S3 via /admin/documents/presign; this stores a
+  // placeholder URL until AWS keys are configured.
+  const upload = async () => {
     const colors = ["10b981", "0ea5e9", "f59e0b", "8b5cf6", "ef4444", "14b8a6"];
-    addPhoto({
-      id: newId("IMG"),
-      url: `https://placehold.co/600x400/${colors[photos.length % colors.length]}/ffffff?text=${encodeURIComponent(form.category)}`,
-      caption: form.caption.trim() || form.category,
-      category: form.category,
-      date: "2025-06-09",
-    });
-    toast("Photo uploaded");
-    setForm({ category: "Road work", caption: "" });
-    setOpen(false);
+    setSaving(true);
+    try {
+      await api.post("/admin/photos", {
+        url: `https://placehold.co/600x400/${colors[photos.length % colors.length]}/ffffff?text=${encodeURIComponent(form.category)}`,
+        caption: form.caption.trim() || form.category,
+        category: form.category,
+      });
+      toast("Photo uploaded");
+      setForm({ category: "Road work", caption: "" });
+      setOpen(false);
+      reload();
+    } catch (e) {
+      toast(e.message || "Upload failed", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      await api.del(`/admin/photos/${confirmDelete.dbId}`);
+      toast("Photo deleted");
+      setConfirmDelete(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not delete photo", "error");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -70,7 +99,14 @@ export default function AdminPhotosPage() {
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         {filtered.map((p) => (
-          <Card key={p.id} className="group overflow-hidden">
+          <Card key={p.id} className="group relative overflow-hidden">
+            <button
+              onClick={() => setConfirmDelete(p)}
+              className="absolute right-2 top-2 z-10 grid h-8 w-8 place-items-center rounded-lg bg-white/90 text-slate-500 opacity-0 shadow-sm transition-opacity hover:text-rose-600 group-hover:opacity-100"
+              title="Delete photo"
+            >
+              <Icon name="trash-2" size={15} />
+            </button>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={p.url}
@@ -96,7 +132,7 @@ export default function AdminPhotosPage() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={upload}>Upload</Button>
+            <Button onClick={upload} loading={saving}>Upload</Button>
           </>
         }
       >
@@ -120,6 +156,15 @@ export default function AdminPhotosPage() {
           </Field>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={remove}
+        loading={deleting}
+        title="Delete photo"
+        message={`Delete "${confirmDelete?.caption}"? This removes it from the gallery.`}
+      />
     </div>
   );
 }

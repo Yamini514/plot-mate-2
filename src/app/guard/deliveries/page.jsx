@@ -21,7 +21,8 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { deliveries as seed } from "@/lib/guard-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -42,12 +43,27 @@ const courierIcon = {
   Ekart: "truck",
 };
 
+function downloadCSV(filename, rows, columns) {
+  const head = columns.map((c) => `"${c.label}"`).join(",");
+  const body = rows.map((r) => columns.map((c) => `"${String(c.get(r) ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([head + "\n" + body], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function DeliveryTracking() {
   const toast = useToast();
-  const [rows, setRows] = useState(seed);
+  const { data: raw, reload } = useApi("/guard/deliveries", { page_size: 300 });
+  // Map backend field names to the labels this page renders.
+  const rows = normalizeList(raw).map((d) => ({
+    ...d, resident: d.residentName, flat: d.plotNo, received: d.receivedAt, delivered: d.deliveredAt,
+  }));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
 
   const counts = useMemo(() => {
     const c = { all: rows.length };
@@ -65,27 +81,39 @@ export default function DeliveryTracking() {
     return matchQ && matchF;
   });
 
-  const handover = (id, resident) => {
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, status: "delivered", delivered: "Just now" } : r)));
-    toast(`Package handed over to ${resident}`);
+  const handover = async (d) => {
+    setBusyId(d.id);
+    try {
+      await api.post(`/guard/deliveries/${d.dbId}/handover`);
+      toast(`Package handed over to ${d.resident}`);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not hand over", "error");
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const logPackage = (e) => {
+  const logPackage = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const newRow = {
-      id: `PKG-${7751 + rows.length}`,
-      courier: f.get("courier") || "Other",
-      agent: f.get("agent") || "—",
-      resident: f.get("resident") || "—",
-      flat: f.get("flat") || "—",
-      received: "Just now",
-      delivered: "—",
-      status: "received",
-    };
-    setRows((rs) => [newRow, ...rs]);
-    setOpen(false);
-    toast(`Package ${newRow.id} logged for ${newRow.resident}`);
+    setSaving(true);
+    try {
+      const { data } = await api.post("/guard/deliveries", {
+        courier: f.get("courier") || "Other",
+        agent: f.get("agent") || "—",
+        residentName: f.get("resident") || "—",
+        plotNo: f.get("flat") || "—",
+        status: "received",
+      });
+      setOpen(false);
+      toast(`Package ${data.code} logged for ${data.residentName}`);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not log package", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -96,7 +124,19 @@ export default function DeliveryTracking() {
         subtitle="Track courier and vendor packages received at the gate"
         actions={
           <>
-            <Button variant="secondary" icon="download" onClick={() => toast("Delivery log exported")}>
+            <Button variant="secondary" icon="download" onClick={() => {
+              downloadCSV("deliveries.csv", filtered, [
+                { label: "Package ID", get: (r) => r.id },
+                { label: "Courier", get: (r) => r.courier },
+                { label: "Agent", get: (r) => r.agent },
+                { label: "Resident", get: (r) => r.resident },
+                { label: "Flat / Plot", get: (r) => r.flat },
+                { label: "Received", get: (r) => r.received },
+                { label: "Delivered", get: (r) => r.delivered },
+                { label: "Status", get: (r) => r.status },
+              ]);
+              toast("Delivery log exported");
+            }}>
               Export
             </Button>
             <Button icon="package-plus" onClick={() => setOpen(true)}>
@@ -131,7 +171,7 @@ export default function DeliveryTracking() {
                 <p className="truncate text-sm font-semibold text-slate-800">{d.resident}</p>
                 <p className="truncate text-xs text-slate-400">{d.flat} · {d.courier} · {d.id}</p>
               </div>
-              <Button size="sm" variant="secondary" icon="check" onClick={() => handover(d.id, d.resident)}>
+              <Button size="sm" variant="secondary" icon="check" loading={busyId === d.id} onClick={() => handover(d)}>
                 Handover
               </Button>
             </div>
@@ -190,7 +230,7 @@ export default function DeliveryTracking() {
                   <Td><StatusBadge status={d.status} /></Td>
                   <Td className="text-right">
                     {d.status !== "delivered" ? (
-                      <Button size="sm" variant="secondary" icon="check" onClick={() => handover(d.id, d.resident)}>
+                      <Button size="sm" variant="secondary" icon="check" loading={busyId === d.id} onClick={() => handover(d)}>
                         Handover
                       </Button>
                     ) : (
@@ -213,7 +253,7 @@ export default function DeliveryTracking() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="log-package" icon="package-plus">Log Package</Button>
+            <Button type="submit" form="log-package" icon="package-plus" loading={saving}>Log Package</Button>
           </>
         }
       >

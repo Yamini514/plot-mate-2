@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   PageHeader,
   Card,
@@ -16,11 +16,26 @@ import {
   Td,
   Tr,
   EmptyState,
+  ConfirmDialog,
+  Field,
+  inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { useStore } from "@/lib/store";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
+import { useAuth } from "@/lib/auth";
+import { useSettings } from "@/lib/useSettings";
 import { formatDate } from "@/lib/utils";
+
+function downloadCSV(filename, rows, columns) {
+  const head = columns.map((c) => `"${c.label}"`).join(",");
+  const body = rows.map((r) => columns.map((c) => `"${String(c.get(r) ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([head + "\n" + body], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
 
 const catIcon = {
   Roads: "construction",
@@ -32,10 +47,30 @@ const catIcon = {
 };
 
 export default function ComplaintsPage() {
-  const { complaints: allComplaints, updateComplaint } = useStore();
+  const { data: raw, reload } = useApi("/admin/complaints", { page_size: 300 });
+  const allComplaints = normalizeList(raw);
+  const { data: rawStaff } = useApi("/admin/staff");
+  const { settings } = useSettings();
+  const { user } = useAuth();
   const toast = useToast();
   const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState(null);
+  const [busyAction, setBusyAction] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [assignFor, setAssignFor] = useState(null); // complaint being (re)assigned
+
+  // Candidate assignees: committee members + staff/vendors — anyone the admin
+  // can hand a complaint to, each carrying their own contact details.
+  const assignees = useMemo(() => {
+    const committee = (settings.committee ?? [])
+      .filter((m) => (m.name || "").trim())
+      .map((m) => ({ name: m.name, role: m.role || "Committee", phone: m.phone || "", email: m.email || "", group: "Committee" }));
+    const staff = normalizeList(rawStaff)
+      .filter((s) => (s.name || "").trim())
+      .map((s) => ({ name: s.name, role: s.role || (s.type === "vendor" ? "Vendor" : "Staff"), phone: s.phone || "", email: "", group: s.type === "vendor" ? "Vendors" : "Staff" }));
+    return [...committee, ...staff];
+  }, [settings.committee, rawStaff]);
 
   const counts = useMemo(() => {
     return {
@@ -50,20 +85,55 @@ export default function ComplaintsPage() {
     (c) => filter === "all" || c.status === filter,
   );
 
-  const resolve = () => {
+  const resolve = async () => {
     if (!selected) return;
-    updateComplaint(selected.id, { status: "resolved", updatedAt: "2025-06-09" });
-    toast(`${selected.id} marked resolved`);
-    setSelected(null);
+    setBusyAction("resolve");
+    try {
+      await api.post(`/admin/complaints/${selected.dbId}/resolve`);
+      toast(`${selected.id} marked resolved`);
+      setSelected(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not resolve", "error");
+    } finally {
+      setBusyAction(null);
+    }
   };
-  const assign = () => {
-    if (!selected) return;
-    updateComplaint(selected.id, {
-      status: selected.status === "open" ? "in_progress" : selected.status,
-      assignedTo: "Maintenance Team",
-    });
-    toast(`${selected.id} assigned to Maintenance Team`);
-    setSelected(null);
+  const assign = async (assignee) => {
+    const complaint = assignFor;
+    if (!complaint || !assignee?.name?.trim()) return;
+    setBusyAction("assign");
+    try {
+      await api.post(`/admin/complaints/${complaint.dbId}/assign`, {
+        assignedTo: assignee.name.trim(),
+        assignedPhone: assignee.phone || null,
+        assignedEmail: assignee.email || null,
+      });
+      toast(`${complaint.id} assigned to ${assignee.name.trim()}`);
+      setAssignFor(null);
+      setSelected(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not assign", "error");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      await api.del(`/admin/complaints/${confirmDelete.dbId}`);
+      toast(`${confirmDelete.id} deleted`);
+      setConfirmDelete(null);
+      setSelected(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not delete", "error");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -71,7 +141,20 @@ export default function ComplaintsPage() {
       <PageHeader
         title="Complaints"
         subtitle="Resident-reported issues and resolution tracking"
-        actions={<Button variant="secondary" icon="download" onClick={() => toast(`Exported ${filtered.length} complaints`)}>Export</Button>}
+        actions={<Button variant="secondary" icon="download" onClick={() => {
+          downloadCSV("plotmate-complaints.csv", filtered, [
+            { label: "ID", get: (c) => c.id },
+            { label: "Issue", get: (c) => c.title },
+            { label: "Category", get: (c) => c.category },
+            { label: "Raised by", get: (c) => c.raisedBy },
+            { label: "Plot", get: (c) => c.plotNo },
+            { label: "Priority", get: (c) => c.priority },
+            { label: "Status", get: (c) => c.status },
+            { label: "Assigned to", get: (c) => c.assignedTo },
+            { label: "Updated", get: (c) => c.updatedAt },
+          ]);
+          toast(`Exported ${filtered.length} complaints`);
+        }}>Export</Button>}
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -145,10 +228,13 @@ export default function ComplaintsPage() {
         wide
         footer={
           <>
-            <Button variant="secondary" icon="user-check" onClick={assign}>
-              Assign
+            <Button variant="ghost" icon="trash-2" onClick={() => setConfirmDelete(selected)}>
+              Delete
             </Button>
-            <Button icon="circle-check-big" onClick={resolve}>Mark resolved</Button>
+            <Button variant="secondary" icon="user-check" onClick={() => setAssignFor(selected)}>
+              {selected?.assignedTo ? "Reassign" : "Assign"}
+            </Button>
+            <Button icon="circle-check-big" loading={busyAction === "resolve"} onClick={resolve}>Mark resolved</Button>
           </>
         }
       >
@@ -166,24 +252,197 @@ export default function ComplaintsPage() {
             <p className="text-sm leading-relaxed text-slate-700">
               {selected.description}
             </p>
-            <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4">
-              <Avatar name={selected.raisedBy} size={40} />
-              <div>
-                <p className="text-sm font-medium text-slate-700">{selected.raisedBy}</p>
-                <p className="text-xs text-slate-400">
-                  Plot {selected.plotNo} · raised {formatDate(selected.createdAt)}
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <ContactCard
+                heading="Raised by"
+                name={selected.raisedBy}
+                sub={`Plot ${selected.plotNo ?? "—"} · raised ${formatDate(selected.createdAt)}`}
+                phone={selected.raisedByPhone}
+                email={selected.raisedByEmail}
+                tone="slate"
+              />
+              <ContactCard
+                heading="Assigned to"
+                name={selected.assignedTo}
+                sub={selected.assignedTo ? "Handling this complaint" : "Not assigned yet"}
+                phone={selected.assignedPhone}
+                email={selected.assignedEmail}
+                tone="violet"
+                empty="Unassigned"
+              />
+            </div>
+
+            {/* The admin currently managing the desk — the resident's point of contact. */}
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3">
+              <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-50 text-brand-600">
+                <Icon name="headset" size={17} />
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs text-slate-400">Managed by (admin)</p>
+                <p className="text-sm font-medium text-slate-700">
+                  {user?.name ?? "Association office"}
+                  {user?.title ? ` · ${user.title}` : ""}
                 </p>
               </div>
-              {selected.assignedTo && (
-                <span className="ml-auto text-right">
-                  <p className="text-xs text-slate-400">Assigned to</p>
-                  <p className="text-sm font-medium text-slate-700">{selected.assignedTo}</p>
-                </span>
+              {user?.email && (
+                <a href={`mailto:${user.email}`} className="ml-auto text-xs font-medium text-brand-600 hover:underline">
+                  {user.email}
+                </a>
               )}
             </div>
           </div>
         )}
       </Modal>
+
+      {/* Assign / reassign — pick a committee member, staff or vendor (contact attached) */}
+      <AssignModal
+        complaint={assignFor}
+        assignees={assignees}
+        busy={busyAction === "assign"}
+        onClose={() => setAssignFor(null)}
+        onAssign={assign}
+      />
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={remove}
+        loading={deleting}
+        title="Delete complaint"
+        message={`Delete complaint ${confirmDelete?.id} — "${confirmDelete?.title}"? This permanently removes it.`}
+      />
     </div>
+  );
+}
+
+// A contact tile: name + role with click-to-call / click-to-mail links.
+function ContactCard({ heading, name, sub, phone, email, tone = "slate", empty }) {
+  const tones = {
+    slate: "bg-slate-100 text-slate-600",
+    violet: "bg-violet-50 text-violet-600",
+  };
+  return (
+    <div className="rounded-xl border border-slate-200 p-4">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">{heading}</p>
+      {name ? (
+        <div className="flex items-start gap-3">
+          <Avatar name={name} size={38} />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium text-slate-800">{name}</p>
+            {sub && <p className="truncate text-xs text-slate-400">{sub}</p>}
+            <div className="mt-1.5 space-y-1">
+              {phone ? (
+                <a href={`tel:${phone}`} className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-brand-600">
+                  <Icon name="phone" size={12} /> {phone}
+                </a>
+              ) : (
+                <p className="flex items-center gap-1.5 text-xs text-slate-300"><Icon name="phone" size={12} /> No phone on file</p>
+              )}
+              {email ? (
+                <a href={`mailto:${email}`} className="flex items-center gap-1.5 truncate text-xs text-slate-600 hover:text-brand-600">
+                  <Icon name="mail" size={12} /> {email}
+                </a>
+              ) : (
+                <p className="flex items-center gap-1.5 text-xs text-slate-300"><Icon name="mail" size={12} /> No email on file</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="flex items-center gap-2 py-1 text-sm text-slate-400">
+          <span className={`grid h-9 w-9 place-items-center rounded-full ${tones[tone]}`}><Icon name="user-x" size={16} /></span>
+          {empty ?? "—"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Pick an assignee from committee/staff/vendors (contact auto-attached), or type
+// a custom one. Nothing is assigned until the admin confirms.
+function AssignModal({ complaint, assignees, busy, onClose, onAssign }) {
+  const [pickedName, setPickedName] = useState("");
+  const [custom, setCustom] = useState({ name: "", phone: "", email: "" });
+
+  useEffect(() => {
+    if (complaint) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset picker when a new complaint opens
+      setPickedName(complaint.assignedTo ?? "");
+      setCustom({ name: "", phone: "", email: "" });
+    }
+  }, [complaint]);
+
+  const grouped = useMemo(() => {
+    const g = {};
+    for (const a of assignees) (g[a.group] ??= []).push(a);
+    return g;
+  }, [assignees]);
+
+  const usingCustom = pickedName === "__custom__";
+  const chosen = usingCustom
+    ? custom
+    : assignees.find((a) => a.name === pickedName) ?? (pickedName ? { name: pickedName } : null);
+
+  return (
+    <Modal
+      open={!!complaint}
+      onClose={onClose}
+      title={`Assign ${complaint?.id ?? "complaint"}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button icon="user-check" loading={busy} disabled={!chosen?.name?.trim()} onClick={() => onAssign(chosen)}>
+            Assign
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Assign to">
+          <select className={inputClass} value={pickedName} onChange={(e) => setPickedName(e.target.value)}>
+            <option value="">— Select an assignee —</option>
+            {Object.entries(grouped).map(([group, list]) => (
+              <optgroup key={group} label={group}>
+                {list.map((a, i) => (
+                  <option key={`${group}-${i}`} value={a.name}>
+                    {a.name}{a.role ? ` · ${a.role}` : ""}{a.phone ? ` · ${a.phone}` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+            <option value="__custom__">+ Enter someone else…</option>
+          </select>
+        </Field>
+
+        {usingCustom ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Name">
+              <input className={inputClass} placeholder="e.g. Maintenance Team" value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} />
+            </Field>
+            <Field label="Phone">
+              <input className={inputClass} placeholder="+91 …" value={custom.phone} onChange={(e) => setCustom({ ...custom, phone: e.target.value })} />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field label="Email">
+                <input className={inputClass} placeholder="name@example.com" value={custom.email} onChange={(e) => setCustom({ ...custom, email: e.target.value })} />
+              </Field>
+            </div>
+          </div>
+        ) : chosen?.name ? (
+          <div className="rounded-xl bg-slate-50 p-3 text-sm">
+            <p className="font-medium text-slate-700">{chosen.name}</p>
+            <p className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+              <span className="inline-flex items-center gap-1"><Icon name="phone" size={12} /> {chosen.phone || "No phone on file"}</span>
+              <span className="inline-flex items-center gap-1"><Icon name="mail" size={12} /> {chosen.email || "No email on file"}</span>
+            </p>
+          </div>
+        ) : (
+          <p className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-xs text-slate-400">
+            Add committee members under Settings, or staff/vendors under Staff, to assign with contact details.
+          </p>
+        )}
+      </div>
+    </Modal>
   );
 }

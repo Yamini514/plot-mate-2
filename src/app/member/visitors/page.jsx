@@ -23,66 +23,75 @@ import {
   inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
+import { ShareModal } from "@/components/ShareModal";
+import { QrCanvas, qrPngFile } from "@/components/Qr";
 import { useToast } from "@/components/Toast";
-import {
-  myProperties,
-  pendingApprovals as seedApprovals,
-  expectedVisitors as seedExpected,
-  frequentPasses as seedPasses,
-  deliveries as seedDeliveries,
-  visitorHistory,
-  PURPOSES,
-} from "@/lib/member-gate-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+import { useAuth } from "@/lib/auth";
+import { PURPOSES } from "@/lib/member-gate-data";
 
-/* Deterministic QR-like pattern (demo only) — stable across SSR/CSR. */
-function QrCode({ value, size = 144 }) {
-  const n = 13;
-  let h = 0;
-  for (let i = 0; i < value.length; i++) h = (h * 31 + value.charCodeAt(i)) >>> 0;
-  const isFinder = (r, c) => {
-    const inBox = (br, bc) => r >= br && r < br + 3 && c >= bc && c < bc + 3;
-    return inBox(0, 0) || inBox(0, n - 3) || inBox(n - 3, 0);
-  };
-  const cells = [];
-  for (let r = 0; r < n; r++) {
-    for (let c = 0; c < n; c++) {
-      const v = (h ^ ((r * 31 + c) * 2654435761)) >>> 0;
-      cells.push(isFinder(r, c) ? true : v % 5 < 2);
-    }
-  }
-  return (
-    <div className="rounded-xl bg-white p-2 ring-1 ring-slate-200" style={{ width: size, height: size }}>
-      <div className="grid h-full w-full" style={{ gridTemplateColumns: `repeat(${n}, 1fr)` }}>
-        {cells.map((on, i) => (
-          <span key={i} className={on ? "bg-slate-900" : "bg-white"} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-let seq = 0;
-const newPass = () => {
-  seq += 1;
-  return `GAV-${5600 + seq}-${["AX", "Q7", "MK", "ZP", "RV"][seq % 5]}`;
-};
-
-const propLabel = (id) => myProperties.find((p) => p.id === id)?.label ?? id;
+// Live visitors already carry the plot number, so the label IS the plot.
+const propLabel = (id) => id ?? "—";
 
 export default function MemberVisitors() {
   const toast = useToast();
-  const [approvals, setApprovals] = useState(seedApprovals);
-  const [expected, setExpected] = useState(seedExpected);
-  const [passes, setPasses] = useState(seedPasses);
-  const [deliveries, setDeliveries] = useState(seedDeliveries);
+  const { user } = useAuth();
+  const { data: rawVisitors, reload } = useApi("/member/visitors");
+  // Map live visitors to the labels this page renders.
+  const all = normalizeList(rawVisitors).map((v) => ({
+    ...v, property: v.plotNo, pass: v.passCode, date: v.expectedOn ?? "—",
+    window: "All day", vehicle: v.vehicleNo, in: v.checkIn, out: v.checkOut,
+  }));
+  const approvals = all.filter((v) => v.status === "pending")
+    .map((a) => ({ ...a, type: "visitor", gate: "Main Gate", requestedAt: "awaiting" }));
+  const expected = all.filter((v) => ["approved", "expected"].includes(v.status));
+  const history = all.filter((v) => ["checked_out", "left", "rejected", "inside"].includes(v.status));
+
+  // Frequent passes & deliveries have no backend yet — start empty so a member
+  // only ever sees their own data, never another plot's sample entries.
+  const [passes, setPasses] = useState([]);
+  const [deliveries, setDeliveries] = useState({ awaiting: [], expected: [], recent: [] });
   const [tab, setTab] = useState("expected");
   const [open, setOpen] = useState(false);
-  const [passView, setPassView] = useState(null); // { name, property, pass, window, purpose }
+  const [passView, setPassView] = useState(null);
+  const [shareFor, setShareFor] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
 
-  const decide = (id, ok) => {
-    const r = approvals.find((a) => a.id === id);
-    setApprovals((as) => as.filter((a) => a.id !== id));
-    toast(ok ? `Entry approved for ${r.name}` : `Entry denied for ${r.name}`, ok ? "success" : "error");
+  // Human-readable text for sharing a gate pass via any channel.
+  const passShareText = (p) =>
+    p
+      ? `Gate pass ${p.pass} for ${p.name} at ${propLabel(p.property)}. Show this QR at the gate for entry${p.window ? ` (valid ${p.window})` : ""}.`
+      : "";
+
+  // Save the gate pass QR as a PNG image.
+  const downloadPass = async (p) => {
+    try {
+      const file = await qrPngFile(p.pass, `gate-pass-${p.pass}.png`);
+      const href = URL.createObjectURL(file);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = file.name;
+      a.click();
+      URL.revokeObjectURL(href);
+      toast("Gate pass QR downloaded");
+    } catch {
+      toast("Could not download the pass", "error");
+    }
+  };
+
+  const decide = async (v, ok) => {
+    setBusyId(v.id);
+    try {
+      await api.post(`/member/visitors/${v.dbId}/${ok ? "approve" : "reject"}`);
+      toast(ok ? `Entry approved for ${v.name}` : `Entry denied for ${v.name}`, ok ? "success" : "error");
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not update", "error");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const togglePass = (id) => {
@@ -96,26 +105,40 @@ export default function MemberVisitors() {
     toast("Marked as collected");
   };
 
-  const preRegister = (e) => {
+  const preRegister = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const pass = newPass();
-    const row = {
-      id: `EXP-${3305 + expected.length}`,
-      name: f.get("name") || "Guest",
-      phone: f.get("phone") || "—",
-      property: f.get("property"),
-      purpose: f.get("purpose") || "Guest",
-      date: f.get("date") || "Today",
-      window: f.get("window") || "All day",
-      pass,
-      status: "expected",
-      vehicle: f.get("vehicle") || "—",
-    };
-    setExpected((xs) => [row, ...xs]);
-    setOpen(false);
-    setPassView(row);
-    toast(`${row.name} pre-registered · gate pass ${pass} generated`);
+    setSaving(true);
+    try {
+      const { data } = await api.post("/member/visitors", {
+        name: f.get("name") || "Guest",
+        phone: f.get("phone"),
+        purpose: f.get("purpose") || "Guest",
+        vehicleNo: f.get("vehicle"),
+        expectedOn: f.get("date"),
+      });
+      setOpen(false);
+      setPassView({ name: data.name, property: data.plotNo, pass: data.passCode, purpose: data.purpose, window: data.expectedOn });
+      toast(`${data.name} pre-registered · gate pass ${data.passCode} generated`);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not pre-register", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelPass = async (v) => {
+    setBusyId(v.id);
+    try {
+      await api.post(`/member/visitors/${v.dbId}/reject`);
+      toast(`Cancelled pass for ${v.name}`, "info");
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not cancel", "error");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
@@ -147,9 +170,9 @@ export default function MemberVisitors() {
                   <p className="text-xs text-slate-400">{a.purpose} · {propLabel(a.property)} · {a.gate} · {a.requestedAt}</p>
                 </div>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="secondary" icon="phone" onClick={() => toast(`Calling ${a.name}…`, "info")}>Call</Button>
-                  <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50" icon="x" onClick={() => decide(a.id, false)}>Deny</Button>
-                  <Button size="sm" icon="check" onClick={() => decide(a.id, true)}>Approve</Button>
+                  <Button size="sm" variant="secondary" icon="phone" onClick={() => { window.location.href = `tel:${String(a.phone).replace(/\s/g, "")}`; }}>Call</Button>
+                  <Button size="sm" variant="ghost" className="text-rose-600 hover:bg-rose-50" icon="x" loading={busyId === a.id} onClick={() => decide(a, false)}>Deny</Button>
+                  <Button size="sm" icon="check" loading={busyId === a.id} onClick={() => decide(a, true)}>Approve</Button>
                 </div>
               </div>
             ))}
@@ -159,7 +182,7 @@ export default function MemberVisitors() {
 
       {/* Summary */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Expected today" value={expected.filter((e) => e.date === "Today").length} icon="calendar-clock" tone="brand" />
+        <StatCard label="Expected" value={expected.length} icon="calendar-clock" tone="brand" />
         <StatCard label="Awaiting approval" value={approvals.length} icon="bell-ring" tone={approvals.length ? "amber" : "slate"} />
         <StatCard label="Parcels at gate" value={deliveries.awaiting.length} icon="package" tone="sky" />
         <StatCard label="Active passes" value={passes.filter((p) => p.active).length} icon="id-card" tone="violet" hint="Maid, cook, driver…" />
@@ -204,9 +227,9 @@ export default function MemberVisitors() {
                   <span className="font-mono text-xs font-semibold text-slate-500">{v.pass}</span>
                   <div className="flex gap-1.5">
                     <Button size="sm" variant="secondary" icon="qr-code" onClick={() => setPassView(v)}>Pass</Button>
-                    <Button size="sm" variant="ghost" icon="share-2" onClick={() => toast(`Gate pass ${v.pass} shared with ${v.name}`)}>Share</Button>
-                    <button onClick={() => { setExpected((xs) => xs.filter((x) => x.id !== v.id)); toast(`Cancelled pass for ${v.name}`, "info"); }} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Cancel">
-                      <Icon name="trash-2" size={15} />
+                    <Button size="sm" variant="ghost" icon="share-2" onClick={() => setShareFor(v)}>Share</Button>
+                    <button onClick={() => cancelPass(v)} disabled={busyId === v.id} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50" title="Cancel">
+                      <Icon name={busyId === v.id ? "loader-circle" : "trash-2"} size={15} className={busyId === v.id ? "animate-spin" : undefined} />
                     </button>
                   </div>
                 </div>
@@ -316,13 +339,15 @@ export default function MemberVisitors() {
               </tr>
             </thead>
             <tbody>
-              {visitorHistory.map((v) => (
+              {history.length === 0 ? (
+                <Tr><Td className="text-slate-400" colSpan={6}>No visitor history yet.</Td></Tr>
+              ) : history.map((v) => (
                 <Tr key={v.id}>
                   <Td className="font-medium text-slate-800">{v.name}</Td>
                   <Td className="text-slate-500">{v.property}</Td>
                   <Td className="text-slate-600">{v.purpose}</Td>
-                  <Td className="text-slate-500">{v.in}</Td>
-                  <Td className="text-slate-500">{v.out}</Td>
+                  <Td className="text-slate-500">{v.in ?? "—"}</Td>
+                  <Td className="text-slate-500">{v.out ?? "—"}</Td>
                   <Td><StatusBadge status={v.status} /></Td>
                 </Tr>
               ))}
@@ -340,7 +365,7 @@ export default function MemberVisitors() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="prereg" icon="qr-code">Generate gate pass</Button>
+            <Button type="submit" form="prereg" icon="qr-code" loading={saving}>Generate gate pass</Button>
           </>
         }
       >
@@ -352,9 +377,7 @@ export default function MemberVisitors() {
             <input name="phone" className={inputClass} placeholder="+91 9XXXX XXXXX" />
           </Field>
           <Field label="Property">
-            <select name="property" className={inputClass} defaultValue={myProperties[0].id}>
-              {myProperties.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
+            <input name="property" className={inputClass} value={user?.plotNo ?? "—"} readOnly />
           </Field>
           <Field label="Purpose">
             <select name="purpose" className={inputClass} defaultValue="Guest">
@@ -393,15 +416,15 @@ export default function MemberVisitors() {
         footer={
           passView && (
             <>
-              <Button variant="secondary" icon="download" onClick={() => toast("Pass downloaded")}>Download</Button>
-              <Button icon="share-2" onClick={() => toast(`Pass ${passView.pass} shared`)}>Share</Button>
+              <Button variant="secondary" icon="download" onClick={() => downloadPass(passView)}>Download</Button>
+              <Button icon="share-2" onClick={() => setShareFor(passView)}>Share</Button>
             </>
           )
         }
       >
         {passView && (
           <div className="flex flex-col items-center text-center">
-            <QrCode value={passView.pass} />
+            <QrCanvas value={passView.pass} size={150} className="rounded-xl bg-white p-2 ring-1 ring-slate-200" />
             <p className="mt-4 font-mono text-lg font-bold tracking-wider text-slate-800">{passView.pass}</p>
             <p className="mt-1 text-sm font-medium text-slate-700">{passView.name}</p>
             <p className="text-xs text-slate-400">{passView.purpose} · {propLabel(passView.property)}</p>
@@ -417,6 +440,16 @@ export default function MemberVisitors() {
           </div>
         )}
       </Drawer>
+
+      {/* Share gate pass — native share sheet + explicit options */}
+      <ShareModal
+        open={!!shareFor}
+        onClose={() => setShareFor(null)}
+        title="Share gate pass"
+        shareTitle={shareFor ? `Gate pass for ${shareFor.name}` : "Gate pass"}
+        text={passShareText(shareFor)}
+        getFile={shareFor ? () => qrPngFile(shareFor.pass, `gate-pass-${shareFor.pass}.png`) : undefined}
+      />
     </div>
   );
 }

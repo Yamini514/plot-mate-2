@@ -3,14 +3,17 @@
 import { useMemo, useState } from "react";
 import { PageHeader, Card, Badge, Segmented } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { sitePhotos } from "@/lib/mock-data";
+import { normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { formatDate } from "@/lib/utils";
 
 export default function MemberPhotosPage() {
+  const { data: raw } = useApi("/member/photos");
+  const sitePhotos = normalizeList(raw);
   const [cat, setCat] = useState("all");
   const categories = useMemo(
     () => ["all", ...Array.from(new Set(sitePhotos.map((p) => p.category)))],
-    [],
+    [sitePhotos],
   );
   const filtered = sitePhotos.filter((p) => cat === "all" || p.category === cat);
 

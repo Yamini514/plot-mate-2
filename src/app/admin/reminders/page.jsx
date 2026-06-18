@@ -12,8 +12,11 @@ import {
   inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
+import { SendReminderModal } from "@/components/SendReminderModal";
 import { useToast } from "@/components/Toast";
-import { reminders, owners, stats, association } from "@/lib/mock-data";
+import { useSettings } from "@/lib/useSettings";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { formatINR } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -23,23 +26,53 @@ const channels = [
   { id: "email", label: "Email", icon: "mail" },
 ];
 
-const overdueCount = owners.filter((o) => o.daysOverdue > 45).length;
-
 export default function RemindersPage() {
   const toast = useToast();
+  const { settings } = useSettings();
+  const { data: rawReminders, reload } = useApi("/admin/reminders");
+  const reminders = normalizeList(rawReminders);
+  const { data: ps } = useApi("/admin/plots/summary");
+  const { data: bsum } = useApi("/admin/billing/invoices/summary");
+  const pendingCount = ps?.pendingCount ?? 0;
+  const overdueCount = bsum?.defaulters ?? 0;
+  const stats = { pendingCount };
+
   const [channel, setChannel] = useState("whatsapp");
   const [audience, setAudience] = useState("pending");
   const [when, setWhen] = useState("now");
+  const [sending, setSending] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const recipientCount =
-    audience === "overdue" ? overdueCount : audience === "pending" ? stats.pendingCount : 1;
-  const channelLabel = channels.find((c) => c.id === channel)?.label ?? channel;
-  const send = () => {
-    toast(
-      when === "now"
-        ? `Reminder sent to ${recipientCount} owners via ${channelLabel}`
-        : `Reminder scheduled for ${recipientCount} owners via ${channelLabel}`,
-    );
+    audience === "overdue" ? overdueCount : audience === "pending" ? pendingCount : 1;
+
+  // Real batch: create a reminder record per pending plot, per chosen channel.
+  // Nothing is dispatched until the admin confirms the channels in the dialog.
+  const send = async (selectedChannels) => {
+    setSending(true);
+    try {
+      const { data: plots } = await api.get("/admin/plots", { status: "pending", page_size: 300 });
+      const status = when === "now" ? "sent" : "scheduled";
+      const targets = normalizeList(plots).slice(0, 50);
+      await Promise.all(
+        targets.flatMap((p) =>
+          selectedChannels.map((ch) =>
+            api.post("/admin/reminders", {
+              plotNo: p.plotNo, ownerName: p.ownerName, amount: p.amountDue,
+              channel: ch, status,
+            }),
+          ),
+        ),
+      );
+      const via = selectedChannels.length > 1 ? `${selectedChannels.length} channels` : (channels.find((c) => c.id === selectedChannels[0])?.label ?? selectedChannels[0]);
+      toast(`Reminder ${status === "sent" ? "sent" : "scheduled"} for ${recipientCount} owners via ${via}`);
+      setConfirmOpen(false);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not send reminders", "error");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -99,7 +132,7 @@ export default function RemindersPage() {
               <textarea
                 rows={4}
                 className={inputClass}
-                defaultValue={`Dear [Owner Name], This is a reminder that your maintenance fee of ₹[Amount] for Plot [Plot No.] at ${association.name} is pending for FY ${association.fy}. Kindly pay at your earliest convenience. — Secretary`}
+                defaultValue={`Dear [Owner Name], This is a reminder that your maintenance fee of ₹[Amount] for Plot [Plot No.] at ${settings.name} is pending for FY ${settings.fy}. Kindly pay at your earliest convenience. — Secretary`}
               />
             </Field>
 
@@ -131,7 +164,7 @@ export default function RemindersPage() {
               <Button variant="secondary" icon="eye" onClick={() => toast("Preview updated", "info")}>
                 Preview
               </Button>
-              <Button icon="send" onClick={send}>
+              <Button icon="send" onClick={() => setConfirmOpen(true)} loading={sending}>
                 {when === "now" ? "Send now" : "Schedule"}
               </Button>
             </div>
@@ -144,9 +177,9 @@ export default function RemindersPage() {
             <CardHeader title="Preview" icon="message-square" />
             <div className="p-4">
               <div className="rounded-2xl rounded-tl-sm bg-brand-50 p-4 text-sm leading-relaxed text-slate-700">
-                Dear <b>Naveen Varma</b>, this is a reminder that your maintenance
-                fee of <b>₹6,000</b> for Plot <b>P-047</b> at {association.name} is
-                pending for FY {association.fy}. Kindly pay soon. — Secretary
+                Dear <b>{"{owner name}"}</b>, this is a reminder that your maintenance
+                fee of <b>{"{amount due}"}</b> for Plot <b>{"{plot no}"}</b> at {settings.name} is
+                pending for FY {settings.fy}. Kindly pay soon. — Secretary
               </div>
               <p className="mt-2 text-center text-xs text-slate-400">
                 via {channels.find((c) => c.id === channel)?.label}
@@ -184,6 +217,17 @@ export default function RemindersPage() {
           </Card>
         </div>
       </div>
+
+      <SendReminderModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={send}
+        sending={sending}
+        defaultChannels={[channel]}
+        title={when === "now" ? "Send reminders now" : "Schedule reminders"}
+        confirmLabel={when === "now" ? "Send now" : "Schedule"}
+        recipientLabel={`${recipientCount} ${audience === "overdue" ? "overdue" : audience === "pending" ? "pending" : "selected"} owner${recipientCount === 1 ? "" : "s"}`}
+      />
     </div>
   );
 }

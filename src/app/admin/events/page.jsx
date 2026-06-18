@@ -6,13 +6,18 @@ import {
   Card,
   Button,
   Badge,
+  Segmented,
+  EmptyState,
   Modal,
   Field,
   inputClass,
+  ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { useStore, newId } from "@/lib/store";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
+import { cn } from "@/lib/utils";
 
 const typeTone = {
   meeting: "sky",
@@ -33,29 +38,89 @@ const emptyForm = {
 };
 
 export default function AdminEventsPage() {
-  const { events, addEvent } = useStore();
+  const { data: raw, reload } = useApi("/admin/events");
+  const events = normalizeList(raw);
   const toast = useToast();
+  // Split into what's still ahead vs. what's already happened. Events without a
+  // date are treated as upcoming (unscheduled drafts).
+  const [tab, setTab] = useState("upcoming");
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const isUpcoming = (e) => (e.date ? String(e.date).slice(0, 10) >= todayKey : true);
+  const upcoming = events.filter(isUpcoming);
+  const past = events.filter((e) => !isUpcoming(e)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const shown = tab === "upcoming" ? upcoming : past;
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
-  const publish = () => {
+  const openCreate = () => {
+    setEditing(null);
+    setForm(emptyForm);
+    setOpen(true);
+  };
+  const openEdit = (e) => {
+    setEditing(e);
+    setForm({
+      title: e.title ?? "",
+      // <input type="date"> needs YYYY-MM-DD
+      date: e.date ? String(e.date).slice(0, 10) : "",
+      time: e.time ?? "",
+      location: e.location ?? "",
+      type: e.type ?? "meeting",
+      description: e.description ?? "",
+    });
+    setOpen(true);
+  };
+
+  const publish = async () => {
     if (!form.title.trim() || !form.date) {
       toast("Title and date are required", "error");
       return;
     }
-    addEvent({
-      id: newId("EV"),
-      title: form.title.trim(),
-      description: form.description.trim(),
-      date: form.date,
-      time: form.time || "10:00 AM",
-      location: form.location.trim() || "Community Hall",
-      type: form.type,
-      rsvpCount: 0,
-    });
-    toast("Event published");
-    setForm(emptyForm);
-    setOpen(false);
+    setSaving(true);
+    try {
+      const payload = {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        date: form.date,
+        time: form.time || "10:00 AM",
+        location: form.location.trim() || "Community Hall",
+        type: form.type,
+      };
+      if (editing) {
+        await api.put(`/admin/events/${editing.dbId}`, payload);
+        toast("Event updated");
+      } else {
+        await api.post("/admin/events", payload);
+        toast("Event published");
+      }
+      setForm(emptyForm);
+      setEditing(null);
+      setOpen(false);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not save event", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      await api.del(`/admin/events/${confirmDelete.dbId}`);
+      toast("Event deleted");
+      setConfirmDelete(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not delete event", "error");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -63,14 +128,34 @@ export default function AdminEventsPage() {
       <PageHeader
         title="Events & Meetings"
         subtitle="Schedule community events and track RSVPs"
-        actions={<Button icon="plus" onClick={() => setOpen(true)}>New event</Button>}
+        actions={<Button icon="plus" onClick={openCreate}>New event</Button>}
       />
 
+      <div className="mb-4">
+        <Segmented
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "upcoming", label: "Upcoming", count: upcoming.length },
+            { value: "past", label: "Past", count: past.length },
+          ]}
+        />
+      </div>
+
+      {shown.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon="calendar-days"
+            title={tab === "upcoming" ? "No upcoming events" : "No past events"}
+            subtitle={tab === "upcoming" ? "Schedule a community event to see it here." : "Events move here once their date has passed."}
+          />
+        </Card>
+      ) : (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {events.map((e) => (
-          <Card key={e.id} className="overflow-hidden">
+        {shown.map((e) => (
+          <Card key={e.id} className={cn("overflow-hidden", tab === "past" && "opacity-80")}>
             <div className="flex">
-              <div className="flex w-20 shrink-0 flex-col items-center justify-center border-r border-slate-100 bg-brand-50 py-4 text-brand-700">
+              <div className={cn("flex w-20 shrink-0 flex-col items-center justify-center border-r border-slate-100 py-4", tab === "past" ? "bg-slate-50 text-slate-500" : "bg-brand-50 text-brand-700")}>
                 <span className="text-2xl font-bold">
                   {new Date(e.date).getDate()}
                 </span>
@@ -81,10 +166,26 @@ export default function AdminEventsPage() {
               <div className="flex-1 p-4">
                 <div className="flex items-start justify-between gap-2">
                   <p className="font-semibold text-slate-800">{e.title}</p>
-                  <Badge tone={typeTone[e.type]}>
-                    <Icon name={typeIcon[e.type]} size={11} />
-                    <span className="capitalize">{e.type}</span>
-                  </Badge>
+                  <div className="flex items-center gap-1">
+                    <Badge tone={typeTone[e.type]}>
+                      <Icon name={typeIcon[e.type]} size={11} />
+                      <span className="capitalize">{e.type}</span>
+                    </Badge>
+                    <button
+                      onClick={() => openEdit(e)}
+                      className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"
+                      title="Edit"
+                    >
+                      <Icon name="pencil" size={14} />
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(e)}
+                      className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                      title="Delete"
+                    >
+                      <Icon name="trash-2" size={14} />
+                    </button>
+                  </div>
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-slate-500">
                   {e.description}
@@ -105,18 +206,19 @@ export default function AdminEventsPage() {
           </Card>
         ))}
       </div>
+      )}
 
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title="Create event"
+        title={editing ? "Edit event" : "Create event"}
         wide
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={publish}>Publish event</Button>
+            <Button onClick={publish} loading={saving}>{editing ? "Save changes" : "Publish event"}</Button>
           </>
         }
       >
@@ -150,6 +252,15 @@ export default function AdminEventsPage() {
           </div>
         </div>
       </Modal>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={remove}
+        loading={deleting}
+        title="Delete event"
+        message={`Delete "${confirmDelete?.title}"? RSVPs for this event will also be removed.`}
+      />
     </div>
   );
 }

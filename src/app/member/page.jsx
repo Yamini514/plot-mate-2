@@ -19,10 +19,10 @@ import {
   Tr,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { useToast } from "@/components/Toast";
-import { myProfile, myPlots as seedPlots, myPortfolio } from "@/lib/member-data";
-import { pendingApprovals } from "@/lib/member-gate-data";
-import { announcements, association } from "@/lib/mock-data";
+import { normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+import { useAuth } from "@/lib/auth";
+import { useSettings } from "@/lib/useSettings";
 import { formatINR, formatDate } from "@/lib/utils";
 
 const activityIcon = {
@@ -33,42 +33,57 @@ const activityIcon = {
 };
 
 export default function MemberHome() {
-  const toast = useToast();
-  const [plots, setPlots] = useState(seedPlots);
+  const { user } = useAuth();
+  const { settings } = useSettings();
+  const { data: rawAnn } = useApi("/member/announcements");
+  const announcements = normalizeList(rawAnn);
+  const { data: rawPlots } = useApi("/member/plots");
+  const { data: billing } = useApi("/member/billing");
+  const { data: rawVis } = useApi("/member/visitors");
   const [selectedId, setSelectedId] = useState(null);
   const [tab, setTab] = useState("overview");
 
+  // Real charges for this member (from their invoices), shown under each plot.
+  const charges = [
+    ...(billing?.upcoming ?? []),
+    ...(billing?.history ?? []),
+  ].map((i) => ({ id: i.number, plan: i.planName, frequency: i.period ?? "—", dueDate: i.dueDate, amount: i.amount, status: i.status }));
+
+  // The member's real plot(s), mapped to the card/drawer shape.
+  const plots = normalizeList(rawPlots).map((p) => ({
+    id: p.plotNo,
+    plotNo: p.plotNo,
+    type: "Plot",
+    size: p.sizeSqyd,
+    phase: p.phase ?? "—",
+    facing: "—",
+    paymentStatus: p.paymentStatus,
+    amountDue: p.amountDue,
+    registeredNames: [{ name: p.ownerName || user?.name || "Owner", share: "100%", primary: true }],
+    charges,
+    security: { visitorsThisMonth: (rawVis ?? []).length, deliveriesPending: 0, openIncidents: 0, registeredVehicles: [], activity: [], lastEntry: "—" },
+  }));
+
+  const pendingApprovals = normalizeList(rawVis)
+    .filter((v) => v.status === "pending")
+    .map((v) => ({ id: v.id, name: v.name, purpose: v.purpose, property: v.plotNo, gate: "Main Gate", requestedAt: "awaiting", type: "visitor" }));
+
+  const myProfile = { name: user?.name ?? "Member", memberId: user?.plotNo ?? "—", membership: "owner" };
+  const myPortfolio = { plots: plots.length, jointPlots: 0, visitors: (rawVis ?? []).length, incidents: 0, deliveries: 0 };
+
   const selected = plots.find((p) => p.id === selectedId) ?? null;
-  const totalDue = plots.reduce((s, p) => s + p.amountDue, 0);
+  const totalDue = billing?.summary?.totalDue ?? plots.reduce((s, p) => s + (p.amountDue || 0), 0);
 
   const openPlot = (id) => {
     setSelectedId(id);
     setTab("overview");
   };
 
-  const payPlot = (id) => {
-    setPlots((ps) =>
-      ps.map((p) =>
-        p.id === id
-          ? {
-              ...p,
-              amountDue: 0,
-              paymentStatus: "paid",
-              daysOverdue: 0,
-              charges: p.charges.map((c) => (c.status === "paid" ? c : { ...c, status: "paid" })),
-            }
-          : p,
-      ),
-    );
-    const p = plots.find((x) => x.id === id);
-    toast(`Payment of ${formatINR(p.amountDue)} successful for ${p.plotNo} · receipt sent`);
-  };
-
   return (
     <div className="animate-fade-in">
       <PageHeader
         title="My Properties"
-        subtitle={`${myProfile.name} · ${association.name}`}
+        subtitle={`${myProfile.name} · ${settings.name}`}
         actions={
           <>
             <Link href="/member/visitors">
@@ -255,9 +270,9 @@ export default function MemberHome() {
         subtitle={selected ? `${selected.size} sqyd · ${selected.phase} · ${selected.facing} facing` : ""}
         footer={
           selected && selected.amountDue > 0 && (
-            <Button icon="indian-rupee" onClick={() => payPlot(selected.id)}>
-              Pay {formatINR(selected.amountDue)}
-            </Button>
+            <Link href="/member/billing">
+              <Button icon="indian-rupee">Pay {formatINR(selected.amountDue)}</Button>
+            </Link>
           )
         }
       >

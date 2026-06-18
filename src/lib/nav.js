@@ -1,21 +1,23 @@
+// Note: count badges are no longer hardcoded here — they're computed live in
+// useNavBadges() and merged in by AppShell (keyed on href).
 export const adminNav = [
   { label: "Dashboard", href: "/admin", icon: "layout-dashboard", group: "Overview" },
   { label: "Plot Map", href: "/admin/plots", icon: "map", group: "Overview" },
   { label: "Plot Owners", href: "/admin/owners", icon: "users", group: "Community" },
-  { label: "Treasury", href: "/admin/treasury", icon: "wallet", badge: "61", group: "Finance" },
-  { label: "Reminders", href: "/admin/reminders", icon: "bell-ring", badge: "8", group: "Finance" },
+  { label: "Treasury", href: "/admin/treasury", icon: "wallet", group: "Finance" },
+  { label: "Reminders", href: "/admin/reminders", icon: "bell-ring", group: "Finance" },
   { label: "Reports", href: "/admin/reports", icon: "bar-chart-3", group: "Finance" },
+  // Collections page hosts the billing overview + invoices as tabs.
   { label: "Collections", href: "/admin/billing", icon: "gauge", group: "Billing" },
   { label: "Maintenance Plans", href: "/admin/billing/plans", icon: "scroll-text", group: "Billing" },
-  { label: "Invoices", href: "/admin/billing/invoices", icon: "file-text", badge: "37", group: "Billing" },
+  // Helpdesk page hosts the analytics overview + tickets as tabs.
   { label: "Helpdesk", href: "/admin/helpdesk", icon: "life-buoy", group: "Support" },
-  { label: "Tickets", href: "/admin/helpdesk/tickets", icon: "ticket", badge: "12", group: "Support" },
   { label: "Complaints", href: "/admin/complaints", icon: "message-square-warning", group: "Community" },
   { label: "Amenities", href: "/admin/amenities", icon: "calendar-check", group: "Community" },
   { label: "Events", href: "/admin/events", icon: "calendar-days", group: "Community" },
   { label: "Polls", href: "/admin/polls", icon: "vote", group: "Community" },
-  { label: "Visitors", href: "/admin/visitors", icon: "door-open", group: "Operations" },
-  { label: "Security", href: "/admin/security", icon: "shield-check", group: "Operations" },
+  // Security page hosts the oversight overview + gate log as tabs.
+  { label: "Security & Gate", href: "/admin/security", icon: "shield-check", group: "Operations" },
   { label: "Staff & Vendors", href: "/admin/staff", icon: "hard-hat", group: "Operations" },
   { label: "Site Photos", href: "/admin/photos", icon: "image", group: "Operations" },
   { label: "Announcements", href: "/admin/announcements", icon: "megaphone", group: "Operations" },
@@ -25,8 +27,8 @@ export const adminNav = [
 
 export const guardNav = [
   { label: "Dashboard", href: "/guard", icon: "layout-dashboard", group: "Overview" },
-  { label: "Visitors", href: "/guard/visitors", icon: "users-round", badge: "5", group: "Gate" },
-  { label: "Deliveries", href: "/guard/deliveries", icon: "package", badge: "3", group: "Gate" },
+  { label: "Visitors", href: "/guard/visitors", icon: "users-round", group: "Gate" },
+  { label: "Deliveries", href: "/guard/deliveries", icon: "package", group: "Gate" },
   { label: "Residents", href: "/guard/residents", icon: "car", group: "Gate" },
   { label: "Incidents", href: "/guard/incidents", icon: "shield-alert", group: "Security" },
   { label: "Service Requests", href: "/guard/tickets", icon: "ticket", group: "Security" },
@@ -37,11 +39,11 @@ export const guardNav = [
 
 export const memberNav = [
   { label: "My Plot", href: "/member", icon: "home", group: "Me" },
-  { label: "Dues & Pay", href: "/member/dues", icon: "wallet", group: "Me" },
-  { label: "Billing & Invoices", href: "/member/billing", icon: "badge-indian-rupee", group: "Me" },
-  { label: "Payment History", href: "/member/payments", icon: "receipt", group: "Me" },
+  // Billing & Payments hosts Dues/Pay, Invoices and History as tabs.
+  { label: "Billing & Payments", href: "/member/billing", icon: "badge-indian-rupee", group: "Me" },
   { label: "Service Requests", href: "/member/helpdesk", icon: "life-buoy", group: "Me" },
-  { label: "Gate & Visitors", href: "/member/visitors", icon: "scan-line", badge: "2", group: "Me" },
+  { label: "Gate & Visitors", href: "/member/visitors", icon: "scan-line", group: "Me" },
+  { label: "My Profile", href: "/member/profile", icon: "circle-user", group: "Me" },
   { label: "Treasury", href: "/member/treasury", icon: "landmark", group: "Community" },
   { label: "Complaints", href: "/member/complaints", icon: "message-square-warning", group: "Community" },
   { label: "Amenities", href: "/member/amenities", icon: "calendar-check", group: "Community" },

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth, DEMO_ACCOUNTS, homePath } from "@/lib/auth";
-import { association } from "@/lib/mock-data";
 import { Icon } from "@/components/Icon";
 import { cn } from "@/lib/utils";
 
@@ -20,18 +19,17 @@ export default function LoginPage() {
     if (ready && user) router.replace(homePath(user.role));
   }, [ready, user, router]);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
-    const res = login(email, password);
+    const res = await login(email, password);
     if (!res.ok) {
       setError(res.error ?? "Login failed");
       setLoading(false);
       return;
     }
-    const acct = DEMO_ACCOUNTS.find((a) => a.email === email.trim().toLowerCase());
-    router.replace(homePath(acct?.role));
+    router.replace(homePath(res.user.role));
   };
 
   const fill = (role) => {
@@ -85,7 +83,7 @@ export default function LoginPage() {
         </div>
 
         <p className="relative text-xs text-brand-200">
-          {association.name} · {association.location}
+          PlotMate · Plot-owners&rsquo; association management
         </p>
       </div>
 
@@ -97,8 +95,8 @@ export default function LoginPage() {
               <Icon name="map-pinned" size={24} />
             </span>
             <div>
-              <p className="text-lg font-bold text-slate-800">Plotmate</p>
-              <p className="text-xs text-slate-400">{association.name}</p>
+              <p className="text-lg font-bold text-slate-800">PlotMate</p>
+              <p className="text-xs text-slate-400">Association management</p>
             </div>
           </div>
 

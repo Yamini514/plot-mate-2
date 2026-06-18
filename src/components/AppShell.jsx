@@ -1,19 +1,110 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, homePath } from "@/lib/auth";
-import { association } from "@/lib/mock-data";
+import { useSettings } from "@/lib/useSettings";
+import { useNavBadges } from "@/lib/useNavBadges";
+import { useApi, useDebounced } from "@/lib/useApi";
+import { normalizeList } from "@/lib/api";
 import { Icon } from "./Icon";
 import { Avatar } from "./ui";
 import { cn } from "@/lib/utils";
 
+// Per-role "record" source for global search. Pages are always searched on top
+// of this (client-side from the nav).
+const RECORD_SEARCH = {
+  admin: {
+    path: "/admin/plots",
+    query: (q) => ({ search: q, page_size: 6 }),
+    map: (r) => ({ key: `p${r.id}`, title: r.ownerName || "Unregistered plot", sub: `Plot ${r.plotNo}`, href: "/admin/owners", icon: "user" }),
+  },
+  member: {
+    path: "/member/directory",
+    query: (q) => ({ search: q }),
+    map: (r) => ({ key: `d${r.plotNo}`, title: r.name, sub: `Plot ${r.plotNo}`, href: "/member/directory", icon: "user" }),
+  },
+};
+
 export function AppShell({ nav, role, children }) {
   const { user, ready, logout } = useAuth();
+  const { settings } = useSettings();
   const router = useRouter();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const badges = useNavBadges(role);
+
+  // --- Top-bar dropdowns: notifications (bell) + help (?) --------------------
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const notifRef = useRef(null);
+  const helpRef = useRef(null);
+  useEffect(() => {
+    if (!notifOpen && !helpOpen) return;
+    const onDown = (e) => {
+      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
+      if (helpRef.current && !helpRef.current.contains(e.target)) setHelpOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [notifOpen, helpOpen]);
+
+  // The sidebar "needs attention" badges double as the notification feed.
+  const NOTIF_COPY = {
+    "/admin/billing": "unpaid invoices",
+    "/admin/helpdesk": "open service requests",
+    "/admin/complaints": "open complaints",
+    "/guard/visitors": "visitors expected at the gate",
+    "/guard/deliveries": "deliveries awaiting pickup",
+    "/member/visitors": "visitor approvals pending",
+  };
+  const notifications = Object.entries(badges)
+    .filter(([, count]) => count > 0)
+    .map(([href, count]) => {
+      const item = nav.find((n) => n.href === href) || nav.find((n) => href.startsWith(n.href));
+      return {
+        href,
+        count,
+        label: item?.label ?? "Updates",
+        icon: item?.icon ?? "bell",
+        detail: `${count} ${NOTIF_COPY[href] ?? "items need attention"}`,
+      };
+    });
+  const helpHref = role === "guard" ? "/guard/tickets" : `/${role}/helpdesk`;
+
+  // --- Global search ---------------------------------------------------------
+  const [q, setQ] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const dq = useDebounced(q.trim(), 250);
+  const recCfg = RECORD_SEARCH[role];
+  const { data: recData } = useApi(
+    dq.length >= 2 && recCfg ? recCfg.path : null,
+    recCfg ? recCfg.query(dq) : undefined,
+  );
+  const pageMatches = dq
+    ? nav.filter((n) => n.label.toLowerCase().includes(dq.toLowerCase())).slice(0, 6)
+    : [];
+  const recordMatches =
+    dq.length >= 2 && recCfg
+      ? normalizeList(recData).map(recCfg.map).filter((r) => r.title).slice(0, 6)
+      : [];
+  const hasResults = pageMatches.length > 0 || recordMatches.length > 0;
+
+  const go = (href) => {
+    setQ("");
+    setSearchOpen(false);
+    setNotifOpen(false);
+    setHelpOpen(false);
+    router.push(href);
+  };
+  const onSearchKey = (e) => {
+    if (e.key === "Escape") { setQ(""); setSearchOpen(false); return; }
+    if (e.key === "Enter") {
+      const first = pageMatches[0]?.href || recordMatches[0]?.href;
+      if (first) go(first);
+    }
+  };
 
   // Route guard
   useEffect(() => {
@@ -48,7 +139,7 @@ export function AppShell({ nav, role, children }) {
         </span>
         <div className="min-w-0">
           <p className="truncate text-sm font-bold text-slate-800">Plotmate</p>
-          <p className="truncate text-xs text-slate-400">{association.name}</p>
+          <p className="truncate text-xs text-slate-400">{settings.name}</p>
         </div>
       </div>
 
@@ -64,6 +155,7 @@ export function AppShell({ nav, role, children }) {
                 const active =
                   pathname === item.href ||
                   (item.href !== `/${role}` && pathname.startsWith(item.href));
+                const badge = badges[item.href];
                 return (
                   <Link
                     key={item.href}
@@ -81,9 +173,9 @@ export function AppShell({ nav, role, children }) {
                       className={active ? "text-brand-600" : "text-slate-400 group-hover:text-slate-600"}
                     />
                     <span className="flex-1 truncate">{item.label}</span>
-                    {item.badge && (
+                    {badge > 0 && (
                       <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                        {item.badge}
+                        {badge}
                       </span>
                     )}
                   </Link>
@@ -145,26 +237,168 @@ export function AppShell({ nav, role, children }) {
             <Icon name="menu" size={20} />
           </button>
 
-          <div className="hidden items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 sm:flex sm:w-72">
-            <Icon name="search" size={16} className="text-slate-400" />
-            <input
-              placeholder="Search plots, owners, payments…"
-              className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
-            />
+          <div className="relative hidden sm:block sm:w-72">
+            <div className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2">
+              <Icon name="search" size={16} className="text-slate-400" />
+              <input
+                value={q}
+                onChange={(e) => { setQ(e.target.value); setSearchOpen(true); }}
+                onFocus={() => setSearchOpen(true)}
+                onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+                onKeyDown={onSearchKey}
+                placeholder="Search pages, owners…"
+                className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
+              />
+              {q && (
+                <button onClick={() => { setQ(""); setSearchOpen(false); }} className="text-slate-400 hover:text-slate-600">
+                  <Icon name="x" size={14} />
+                </button>
+              )}
+            </div>
+
+            {searchOpen && dq && (
+              <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-[70vh] overflow-y-auto rounded-xl border border-slate-200 bg-white py-1.5 shadow-lg">
+                {!hasResults && (
+                  <p className="px-3 py-3 text-sm text-slate-400">No matches for “{dq}”.</p>
+                )}
+                {pageMatches.length > 0 && (
+                  <div>
+                    <p className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Pages</p>
+                    {pageMatches.map((p) => (
+                      <button
+                        key={p.href}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => go(p.href)}
+                        className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                      >
+                        <Icon name={p.icon} size={15} className="text-slate-400" />
+                        <span className="flex-1 truncate">{p.label}</span>
+                        <span className="text-xs text-slate-300">{p.group}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {recordMatches.length > 0 && (
+                  <div className="border-t border-slate-100">
+                    <p className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                      {role === "admin" ? "Owners & plots" : "Directory"}
+                    </p>
+                    {recordMatches.map((r) => (
+                      <button
+                        key={r.key}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => go(r.href)}
+                        className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-slate-50"
+                      >
+                        <Icon name={r.icon} size={15} className="text-slate-400" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm text-slate-700">{r.title}</span>
+                          <span className="block truncate text-xs text-slate-400">{r.sub}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="ml-auto flex items-center gap-1.5">
             <span className="mr-1 hidden items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 md:inline-flex">
               <Icon name="calendar" size={13} />
-              FY {association.fy}
+              FY {settings.fy}
             </span>
-            <button className="relative grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100">
-              <Icon name="bell" size={18} />
-              <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" />
-            </button>
-            <button className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100">
-              <Icon name="circle-help" size={18} />
-            </button>
+            {/* Notifications */}
+            <div className="relative" ref={notifRef}>
+              <button
+                onClick={() => { setNotifOpen((o) => !o); setHelpOpen(false); }}
+                className="relative grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
+                aria-label="Notifications"
+              >
+                <Icon name="bell" size={18} />
+                {notifications.length > 0 && (
+                  <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" />
+                )}
+              </button>
+              {notifOpen && (
+                <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
+                    <p className="text-sm font-semibold text-slate-800">Notifications</p>
+                    {notifications.length > 0 && (
+                      <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-600">
+                        {notifications.length} item{notifications.length === 1 ? "" : "s"}
+                      </span>
+                    )}
+                  </div>
+                  {notifications.length === 0 ? (
+                    <div className="px-4 py-8 text-center">
+                      <Icon name="check-check" size={22} className="mx-auto text-slate-300" />
+                      <p className="mt-2 text-sm text-slate-500">You&apos;re all caught up</p>
+                    </div>
+                  ) : (
+                    <div className="max-h-[60vh] overflow-y-auto py-1">
+                      {notifications.map((n) => (
+                        <button
+                          key={n.href}
+                          onClick={() => go(n.href)}
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50"
+                        >
+                          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-600">
+                            <Icon name={n.icon} size={16} />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-slate-700">{n.label}</span>
+                            <span className="block truncate text-xs text-slate-400">{n.detail}</span>
+                          </span>
+                          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">{n.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Help & support */}
+            <div className="relative" ref={helpRef}>
+              <button
+                onClick={() => { setHelpOpen((o) => !o); setNotifOpen(false); }}
+                className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
+                aria-label="Help"
+              >
+                <Icon name="circle-help" size={18} />
+              </button>
+              {helpOpen && (
+                <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                  <p className="px-4 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Help &amp; support</p>
+                  <button
+                    onClick={() => go(helpHref)}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50"
+                  >
+                    <Icon name="life-buoy" size={16} className="text-slate-400" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-slate-700">Help desk</span>
+                      <span className="block text-xs text-slate-400">Raise or track a request</span>
+                    </span>
+                  </button>
+                  {role !== "guard" && (
+                    <button
+                      onClick={() => go(`/${role}/announcements`)}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50"
+                    >
+                      <Icon name="megaphone" size={16} className="text-slate-400" />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-slate-700">Announcements</span>
+                        <span className="block text-xs text-slate-400">Latest notices from the association</span>
+                      </span>
+                    </button>
+                  )}
+                  <p className="border-t border-slate-100 px-4 py-2.5 text-xs leading-relaxed text-slate-400">
+                    Tip: use the search bar to jump to any page{role === "admin" ? " or plot owner" : ""}.
+                  </p>
+                </div>
+              )}
+            </div>
             <span className="ml-1 hidden items-center gap-2 rounded-lg py-1 pl-1 pr-3 sm:flex">
               <Avatar name={user.name} size={32} />
               <span className="text-sm font-medium text-slate-700">

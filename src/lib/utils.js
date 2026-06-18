@@ -37,6 +37,25 @@ export function daysAgo(iso, today = "2026-06-09") {
   return `${months} month${months > 1 ? "s" : ""} ago`;
 }
 
+/**
+ * Build a CSV from rows + column defs and trigger a browser download.
+ * columns: [{ label, get: (row) => value }]
+ */
+export function downloadCSV(filename, rows, columns) {
+  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = columns.map((c) => esc(c.label)).join(",");
+  const body = rows
+    .map((r) => columns.map((c) => esc(c.get(r))).join(","))
+    .join("\n");
+  const blob = new Blob([head + "\n" + body], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function initials(name) {
   return name
     .split(" ")
@@ -44,4 +63,21 @@ export function initials(name) {
     .slice(0, 2)
     .join("")
     .toUpperCase();
+}
+
+/**
+ * Validate login credentials before creating an account.
+ * Returns an error string, or null if valid.
+ */
+export function validateAccount({ email, password, confirm }) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((email || "").trim())) {
+    return "Enter a valid email address.";
+  }
+  if ((password || "").length < 8) {
+    return "Password must be at least 8 characters.";
+  }
+  if (confirm !== undefined && password !== confirm) {
+    return "Passwords do not match.";
+  }
+  return null;
 }

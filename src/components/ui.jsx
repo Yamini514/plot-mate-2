@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { Icon } from "./Icon";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /* ---------------- Card ---------------- */
 export function Card({ className, children }) {
@@ -172,13 +172,15 @@ export function Button({
   variant = "primary",
   size = "md",
   icon,
+  loading = false,
+  disabled,
   className,
   children,
   ...props
 }) {
   const variants = {
     primary:
-      "bg-brand-600 text-white hover:bg-brand-700 shadow-sm disabled:opacity-50",
+      "bg-brand-600 text-white hover:bg-brand-700 shadow-sm",
     secondary:
       "bg-white text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50",
     ghost: "text-slate-600 hover:bg-slate-100",
@@ -188,17 +190,24 @@ export function Button({
     sm: "h-8 px-3 text-xs gap-1.5",
     md: "h-10 px-4 text-sm gap-2",
   };
+  const iconSize = size === "sm" ? 14 : 16;
   return (
     <button
+      disabled={disabled || loading}
       className={cn(
         "inline-flex items-center justify-center rounded-lg font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400",
+        "disabled:cursor-not-allowed disabled:opacity-50",
         variants[variant],
         sizes[size],
         className,
       )}
       {...props}
     >
-      {icon && <Icon name={icon} size={size === "sm" ? 14 : 16} />}
+      {loading ? (
+        <Icon name="loader-circle" size={iconSize} className="animate-spin" />
+      ) : (
+        icon && <Icon name={icon} size={iconSize} />
+      )}
       {children}
     </button>
   );
@@ -397,6 +406,40 @@ export function Modal({ open, onClose, title, children, footer, wide }) {
   );
 }
 
+/* ---------------- ConfirmDialog ---------------- */
+export function ConfirmDialog({
+  open,
+  onClose,
+  onConfirm,
+  title = "Are you sure?",
+  message,
+  confirmLabel = "Delete",
+  confirmVariant = "danger",
+  loading = false,
+}) {
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={title}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={loading}>
+            Cancel
+          </Button>
+          <Button variant={confirmVariant} loading={loading} onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm leading-relaxed text-slate-600">
+        {message ?? "This action cannot be undone."}
+      </p>
+    </Modal>
+  );
+}
+
 /* ---------------- Drawer (slide-over) ---------------- */
 export function Drawer({ open, onClose, title, subtitle, children, footer, width = "max-w-lg" }) {
   useEffect(() => {
@@ -467,6 +510,34 @@ export function Field({ label, children, hint }) {
 
 export const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100";
+
+/* ---------------- PasswordInput (with show/hide eye) ---------------- */
+export function PasswordInput({ value, onChange, placeholder, className, autoComplete = "new-password", ...props }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className={cn(inputClass, "pr-10", className)}
+        {...props}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setShow((s) => !s)}
+        aria-label={show ? "Hide password" : "Show password"}
+        title={show ? "Hide password" : "Show password"}
+        className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-400 transition-colors hover:text-slate-600"
+      >
+        <Icon name={show ? "eye-off" : "eye"} size={16} />
+      </button>
+    </div>
+  );
+}
 
 /* ---------------- SegmentedControl ---------------- */
 export function Segmented({ options, value, onChange }) {

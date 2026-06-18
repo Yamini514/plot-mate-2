@@ -10,20 +10,28 @@ import {
   Modal,
   Field,
   inputClass,
+  ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { plans as seed, FREQUENCIES, PROPERTY_TYPES } from "@/lib/billing-data";
+import { FREQUENCIES, PROPERTY_TYPES } from "@/lib/billing-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { formatINR } from "@/lib/utils";
 
 const freqLabel = (v) => FREQUENCIES.find((f) => f.value === v)?.label ?? v;
 
 export default function MaintenancePlans() {
   const toast = useToast();
-  const [rows, setRows] = useState(seed);
+  const { data: raw, reload } = useApi("/admin/billing/plans");
+  const rows = normalizeList(raw);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [types, setTypes] = useState(PROPERTY_TYPES);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const openCreate = () => {
     setEditing(null);
@@ -36,16 +44,38 @@ export default function MaintenancePlans() {
     setOpen(true);
   };
 
-  const toggleActive = (id) => {
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, active: !r.active } : r)));
-    const p = rows.find((r) => r.id === id);
-    toast(`${p.name} ${p.active ? "deactivated" : "activated"}`);
+  const toggleActive = async (p) => {
+    setBusyId(p.id);
+    try {
+      await api.put(`/admin/billing/plans/${p.dbId}`, { active: !p.active });
+      toast(`${p.name} ${p.active ? "deactivated" : "activated"}`);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not update plan", "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async () => {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      await api.del(`/admin/billing/plans/${confirmDelete.dbId}`);
+      toast(`${confirmDelete.name} deleted`);
+      setConfirmDelete(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not delete plan", "error");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const toggleType = (t) =>
     setTypes((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]));
 
-  const save = (e) => {
+  const save = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const data = {
@@ -59,17 +89,22 @@ export default function MaintenancePlans() {
       propertyTypes: types,
       autoInvoice: f.get("autoInvoice") === "on",
     };
-    if (editing) {
-      setRows((rs) => rs.map((r) => (r.id === editing.id ? { ...r, ...data } : r)));
-      toast(`${data.name} updated`);
-    } else {
-      setRows((rs) => [
-        { id: `PLN-${String(rs.length + 1).padStart(2, "0")}`, active: true, subscribers: 0, ...data },
-        ...rs,
-      ]);
-      toast(`${data.name} created`);
+    setSaving(true);
+    try {
+      if (editing) {
+        await api.put(`/admin/billing/plans/${editing.dbId}`, data);
+        toast(`${data.name} updated`);
+      } else {
+        await api.post("/admin/billing/plans", { ...data, active: true });
+        toast(`${data.name} created`);
+      }
+      setOpen(false);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not save plan", "error");
+    } finally {
+      setSaving(false);
     }
-    setOpen(false);
   };
 
   return (
@@ -126,9 +161,10 @@ export default function MaintenancePlans() {
 
             <div className="mt-3 flex items-center gap-2">
               <Button size="sm" variant="secondary" icon="pencil" className="flex-1" onClick={() => openEdit(p)}>Edit</Button>
-              <Button size="sm" variant="ghost" icon={p.active ? "pause" : "play"} onClick={() => toggleActive(p.id)}>
+              <Button size="sm" variant="ghost" icon={p.active ? "pause" : "play"} loading={busyId === p.id} onClick={() => toggleActive(p)}>
                 {p.active ? "Pause" : "Activate"}
               </Button>
+              <Button size="sm" variant="ghost" icon="trash-2" onClick={() => setConfirmDelete(p)} title="Delete plan" />
             </div>
           </Card>
         ))}
@@ -143,7 +179,7 @@ export default function MaintenancePlans() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="plan-form" icon="check">{editing ? "Save changes" : "Create plan"}</Button>
+            <Button type="submit" form="plan-form" icon="check" loading={saving}>{editing ? "Save changes" : "Create plan"}</Button>
           </>
         }
       >
@@ -204,6 +240,15 @@ export default function MaintenancePlans() {
           </label>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={remove}
+        loading={deleting}
+        title="Delete plan"
+        message={`Delete the "${confirmDelete?.name}" plan? Invoices already generated from it are kept, but it can no longer be applied to owners.`}
+      />
     </div>
   );
 }

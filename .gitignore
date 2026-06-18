@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!.env.local.example
 
 # vercel
 .vercel
@@ -42,3 +44,16 @@ next-env.d.ts
 
 # local logs
 dev-server.log
+*.log
+
+# editor / OS
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# local debug / scratch artifacts (repro scripts, screenshots, layout dumps)
+repro*.mjs
+shot-*.png
+orig_layout.json

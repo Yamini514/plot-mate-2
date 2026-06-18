@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { PageHeader, Card, Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { events } from "@/lib/mock-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+import { useToast } from "@/components/Toast";
 
 const typeTone = {
   meeting: "sky",
@@ -13,7 +15,22 @@ const typeTone = {
 };
 
 export default function MemberEventsPage() {
-  const [rsvped, setRsvped] = useState({});
+  const { data: raw, reload } = useApi("/member/events");
+  const events = normalizeList(raw);
+  const toast = useToast();
+  const [busyId, setBusyId] = useState(null);
+
+  const rsvp = async (e) => {
+    setBusyId(e.id);
+    try {
+      await api.post(`/member/events/${e.dbId}/rsvp`);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not RSVP", "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <div className="animate-fade-in">
@@ -21,7 +38,7 @@ export default function MemberEventsPage() {
 
       <div className="space-y-4">
         {events.map((e) => {
-          const going = rsvped[e.id];
+          const going = e.rsvped;
           return (
             <Card key={e.id} className="overflow-hidden">
               <div className="flex flex-col sm:flex-row">
@@ -47,7 +64,7 @@ export default function MemberEventsPage() {
                       <Icon name="map-pin" size={13} /> {e.location}
                     </span>
                     <span className="inline-flex items-center gap-1">
-                      <Icon name="users" size={13} /> {e.rsvpCount + (going ? 1 : 0)} attending
+                      <Icon name="users" size={13} /> {e.rsvpCount} attending
                     </span>
                   </div>
                   <div className="mt-4">
@@ -55,7 +72,8 @@ export default function MemberEventsPage() {
                       size="sm"
                       variant={going ? "secondary" : "primary"}
                       icon={going ? "check" : "calendar-plus"}
-                      onClick={() => setRsvped((r) => ({ ...r, [e.id]: !r[e.id] }))}
+                      loading={busyId === e.id}
+                      onClick={() => rsvp(e)}
                     >
                       {going ? "You're going" : "RSVP"}
                     </Button>

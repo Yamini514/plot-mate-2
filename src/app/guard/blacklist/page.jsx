@@ -20,12 +20,8 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import {
-  blacklistedVisitors,
-  blacklistedVehicles,
-  emergencyAlerts,
-  communityNotices,
-} from "@/lib/guard-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 
 const TABS = [
   { value: "visitors", label: "Visitors" },
@@ -41,34 +37,40 @@ const alertTone = {
 export default function BlacklistAlerts() {
   const toast = useToast();
   const [tab, setTab] = useState("visitors");
-  const [alerts, setAlerts] = useState(emergencyAlerts);
-  const [visitorRows, setVisitorRows] = useState(blacklistedVisitors);
-  const [vehicleRows, setVehicleRows] = useState(blacklistedVehicles);
+  const [alerts, setAlerts] = useState([]); // emergency alerts (no backend feed yet)
+  const communityNotices = []; // community notices (no backend feed yet)
+  const { data: raw, reload } = useApi("/guard/blacklist", { page_size: 300 });
+  const all = normalizeList(raw);
+  const visitorRows = all.filter((b) => b.kind === "visitor");
+  const vehicleRows = all.filter((b) => b.kind === "vehicle");
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const acknowledge = (id, title) => {
     setAlerts((as) => as.map((a) => (a.id === id ? { ...a, status: "acknowledged" } : a)));
     toast(`Acknowledged: ${title}`);
   };
 
-  const addToBlacklist = (e) => {
+  const addToBlacklist = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const reason = f.get("reason") || "Flagged at gate";
-    if (tab === "visitors") {
-      setVisitorRows((rs) => [
-        { id: `BL-V-${22 + rs.length}`, name: f.get("subject") || "Unknown visitor", phone: f.get("phone") || "—", reason, addedBy: "Security", addedOn: "12 Jun 2026", attempts: 0, status: "blacklisted" },
-        ...rs,
-      ]);
-      toast("Visitor added to blacklist");
-    } else {
-      setVehicleRows((rs) => [
-        { id: `BL-C-${15 + rs.length}`, plate: f.get("subject") || "—", model: f.get("phone") || "Unknown vehicle", reason, addedOn: "12 Jun 2026", attempts: 0, status: "blacklisted" },
-        ...rs,
-      ]);
-      toast("Vehicle added to blacklist");
+    setSaving(true);
+    try {
+      if (tab === "visitors") {
+        await api.post("/guard/blacklist", { kind: "visitor", name: f.get("subject") || "Unknown visitor", phone: f.get("phone") || "—", reason });
+        toast("Visitor added to blacklist");
+      } else {
+        await api.post("/guard/blacklist", { kind: "vehicle", plate: f.get("subject") || "—", model: f.get("phone") || "Unknown vehicle", reason });
+        toast("Vehicle added to blacklist");
+      }
+      setOpen(false);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not add to blacklist", "error");
+    } finally {
+      setSaving(false);
     }
-    setOpen(false);
   };
 
   return (
@@ -81,6 +83,7 @@ export default function BlacklistAlerts() {
       />
 
       {/* Emergency alerts */}
+      {alerts.length > 0 && (
       <div className="mb-6 space-y-3">
         <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Emergency alerts</p>
         {alerts.map((a) => {
@@ -109,6 +112,7 @@ export default function BlacklistAlerts() {
           );
         })}
       </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Blacklist table */}
@@ -183,6 +187,9 @@ export default function BlacklistAlerts() {
         <Card>
           <CardHeader title="Community notices" icon="megaphone" />
           <div className="divide-y divide-slate-100">
+            {communityNotices.length === 0 && (
+              <p className="px-5 py-8 text-center text-sm text-slate-400">No notices right now.</p>
+            )}
             {communityNotices.map((n) => (
               <div key={n.id} className="px-5 py-4">
                 <p className="text-sm font-semibold text-slate-800">{n.title}</p>
@@ -204,7 +211,7 @@ export default function BlacklistAlerts() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="add-blacklist" variant="danger" icon="ban">Add to Blacklist</Button>
+            <Button type="submit" form="add-blacklist" variant="danger" icon="ban" loading={saving}>Add to Blacklist</Button>
           </>
         }
       >

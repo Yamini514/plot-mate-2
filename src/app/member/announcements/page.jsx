@@ -2,7 +2,8 @@
 
 import { PageHeader, Card, Badge, Avatar } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { announcements } from "@/lib/mock-data";
+import { normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { formatDate } from "@/lib/utils";
 
 const typeTone = {
@@ -13,6 +14,8 @@ const typeTone = {
 };
 
 export default function MemberAnnouncementsPage() {
+  const { data: raw } = useApi("/member/announcements");
+  const announcements = normalizeList(raw);
   return (
     <div className="animate-fade-in">
       <PageHeader title="Announcements" subtitle="Notices from the committee" />

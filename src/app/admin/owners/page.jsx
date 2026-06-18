@@ -15,50 +15,162 @@ import {
   Modal,
   Field,
   inputClass,
+  PasswordInput,
   EmptyState,
   StatCard,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { stats, association } from "@/lib/mock-data";
-import { useStore } from "@/lib/store";
+import { api } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
-import { formatINR, formatDate } from "@/lib/utils";
+import { ReceiptsModal } from "@/components/ReceiptsModal";
+import { SendReminderModal } from "@/components/SendReminderModal";
+import { PaymentSlipModal } from "@/components/PaymentSlip";
+import { useSettings } from "@/lib/useSettings";
+import { OwnersImportModal } from "./OwnersImportModal";
+import { formatINR, formatDate, validateAccount, downloadCSV } from "@/lib/utils";
 
-const emptyForm = { plotNo: "", sizeSqyd: "", name: "", phone: "", email: "", phase: "Phase 1" };
+// ₹ per sq.yd used for the optional maintenance-due preview (matches the
+// backend Plot model rate).
+const RATE_PER_SQYD = 30;
+
+const emptyForm = {
+  plotNo: "", sizeSqyd: "", name: "", phone: "", email: "", phase: "Phase 1",
+  applyDues: false,
+  createLogin: false, password: "", confirmPassword: "",
+};
 
 export default function OwnersPage() {
-  const { owners: allOwners, addOwner } = useStore();
   const toast = useToast();
+  const { settings } = useSettings();
+  // Live data from the backend (admin sees every plot in the association).
+  const { data: plots, reload } = useApi("/admin/plots", { page_size: 300 });
+  const { data: stats } = useApi("/admin/plots/summary");
+  // Backend exposes owner_name -> ownerName; the table uses `name`.
+  const allOwners = (plots ?? []).map((p) => ({ ...p, name: p.ownerName }));
+
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [receiptsFor, setReceiptsFor] = useState(null); // { plotNo, name }
+  const [remindFor, setRemindFor] = useState(null); // owner the reminder dialog targets
+  const [sendingReminder, setSendingReminder] = useState(false);
+  const [billFor, setBillFor] = useState(null); // owner the sample bill is generated for
 
-  const saveOwner = () => {
+  // Plot numbers already on file — lets the importer flag rows as new vs. update.
+  const existingPlotNos = useMemo(
+    () => new Set(allOwners.map((o) => o.plotNo).filter(Boolean)),
+    [allOwners],
+  );
+
+  const saveOwner = async () => {
     if (!form.plotNo.trim()) {
       toast("Plot number is required", "error");
       return;
     }
-    const size = Number(form.sizeSqyd) || 0;
-    addOwner({
-      id: form.plotNo.trim(),
-      plotNo: form.plotNo.trim(),
-      name: form.name.trim() || null,
-      phone: form.phone.trim() || null,
-      email: form.email.trim() || null,
-      sizeSqyd: size,
-      phase: form.phase,
-      amountDue: size * association.ratePerSqyd,
-      paymentStatus: "pending",
-      membership: "unverified",
-      daysOverdue: 0,
-      lastPaymentDate: null,
-    });
-    toast(`Plot ${form.plotNo.trim()} added`);
-    setForm(emptyForm);
-    setAddOpen(false);
+    // If granting app access, validate credentials before creating anything.
+    if (form.createLogin) {
+      const err = validateAccount({ email: form.email, password: form.password, confirm: form.confirmPassword });
+      if (err) { toast(err, "error"); return; }
+    }
+    setSaving(true);
+    try {
+      // 1) Create the plot record in the registry.
+      await api.post("/admin/plots", {
+        plotNo: form.plotNo.trim(),
+        ownerName: form.name.trim() || null,
+        phone: form.phone.trim() || null,
+        email: form.email.trim() || null,
+        sizeSqyd: Number(form.sizeSqyd) || 0,
+        phase: form.phase,
+        paymentStatus: "pending",
+        // Dues are only billed when the admin opts in — otherwise the plot
+        // starts with a zero balance.
+        applyDues: form.applyDues,
+      });
+      // 2) Optionally create a secure member login linked to this plot.
+      if (form.createLogin) {
+        await api.post("/admin/users", {
+          fullName: form.name.trim() || `Owner ${form.plotNo.trim()}`,
+          email: form.email.trim().toLowerCase(),
+          password: form.password,
+          role: 0, // member
+          phoneNumber: form.phone.trim() || null,
+          active: true,
+          extras: { plot_no: form.plotNo.trim(), title: "Plot Owner" },
+        });
+      }
+      toast(form.createLogin ? `Plot ${form.plotNo.trim()} added with member login` : `Plot ${form.plotNo.trim()} added`);
+      setForm(emptyForm);
+      setAddOpen(false);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not add owner", "error");
+    } finally {
+      setSaving(false);
+    }
   };
+
+  // Fire a reminder for one owner over each chosen channel. Each channel is a
+  // real reminder record so it shows up in the reminder log / history.
+  const sendReminder = async (channels) => {
+    if (!remindFor) return;
+    setSendingReminder(true);
+    try {
+      await Promise.all(
+        channels.map((channel) =>
+          api.post("/admin/reminders", {
+            plotNo: remindFor.plotNo,
+            ownerName: remindFor.name,
+            amount: remindFor.amountDue,
+            channel,
+            status: "sent",
+          }),
+        ),
+      );
+      const via = channels.length > 1 ? `${channels.length} channels` : channels[0];
+      toast(`Reminder sent to ${remindFor.name ?? remindFor.plotNo} via ${via}`);
+      setRemindFor(null);
+      setSelected(null);
+    } catch (e) {
+      toast(e.message || "Could not send reminder", "error");
+    } finally {
+      setSendingReminder(false);
+    }
+  };
+
+  // Synthesize a printable "sample bill" for a plot from its maintenance dues —
+  // the same slip the owner sees, with the full charges/funds breakdown. It has
+  // no dbId, so the slip renders read-only (no payment recording).
+  const sampleInvoice = useMemo(() => {
+    if (!billFor) return null;
+    const rate = Number(settings.ratePerSqyd) || RATE_PER_SQYD;
+    const base = (Number(billFor.sizeSqyd) || 0) * rate;
+    const due = Number(billFor.amountDue) || 0;
+    const amount = base > 0 ? base : due;
+    const balance = due > 0 ? due : base;
+    return {
+      number: `SAMPLE-${billFor.plotNo}`,
+      ownerName: billFor.name || `Owner ${billFor.plotNo}`,
+      property: billFor.plotNo,
+      propertyType: billFor.phase,
+      planName: "Maintenance",
+      period: settings.fy ? `FY ${settings.fy}` : "",
+      amount,
+      lateFee: 0,
+      tax: 0,
+      discount: 0,
+      paid: amount > balance ? amount - balance : 0,
+      balance,
+      issuedOn: new Date().toISOString().slice(0, 10),
+      dueDate: settings.dueDate || "",
+      status: balance > 0 ? "generated" : "paid",
+    };
+  }, [billFor, settings.ratePerSqyd, settings.fy, settings.dueDate]);
 
   const filtered = useMemo(() => {
     return allOwners.filter((o) => {
@@ -82,13 +194,26 @@ export default function OwnersPage() {
     <div className="animate-fade-in">
       <PageHeader
         title="Plot Owners"
-        subtitle={`Registry of all ${association.totalPlots} plots`}
+        subtitle={`Registry of all ${stats?.totalPlots ?? allOwners.length} plots`}
         actions={
           <>
-            <Button variant="secondary" icon="upload" size="md" onClick={() => toast("CSV import started — 0 new rows in demo", "info")}>
-              Import CSV
+            <Button variant="secondary" icon="upload" size="md" onClick={() => setImportOpen(true)}>
+              Import
             </Button>
-            <Button variant="secondary" icon="download" size="md" onClick={() => toast(`Exported ${filtered.length} owners to CSV`)}>
+            <Button variant="secondary" icon="download" size="md" onClick={() => {
+              downloadCSV("plotmate-owners.csv", filtered, [
+                { label: "Plot", get: (o) => o.plotNo },
+                { label: "Owner", get: (o) => o.name },
+                { label: "Phone", get: (o) => o.phone },
+                { label: "Email", get: (o) => o.email },
+                { label: "Size (sqyd)", get: (o) => o.sizeSqyd },
+                { label: "Phase", get: (o) => o.phase },
+                { label: "Membership", get: (o) => o.membership },
+                { label: "Amount due", get: (o) => o.amountDue },
+                { label: "Payment status", get: (o) => o.paymentStatus },
+              ]);
+              toast(`Exported ${filtered.length} owners to CSV`);
+            }}>
               Export
             </Button>
             <Button icon="user-plus" onClick={() => setAddOpen(true)}>
@@ -99,10 +224,10 @@ export default function OwnersPage() {
       />
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Total plots" value={`${association.totalPlots}`} icon="map-pinned" tone="violet" />
-        <StatCard label="Paid" value={`${stats.paidCount}`} icon="circle-check-big" tone="brand" />
-        <StatCard label="Pending" value={`${stats.pendingCount}`} icon="clock" tone="amber" />
-        <StatCard label="Unknown contact" value={`${stats.unknownCount}`} icon="user-x" tone="slate" />
+        <StatCard label="Total plots" value={`${stats?.totalPlots ?? "—"}`} icon="map-pinned" tone="violet" />
+        <StatCard label="Paid" value={`${stats?.paidCount ?? 0}`} icon="circle-check-big" tone="brand" />
+        <StatCard label="Pending" value={`${stats?.pendingCount ?? 0}`} icon="clock" tone="amber" />
+        <StatCard label="Unknown contact" value={`${stats?.unknownCount ?? 0}`} icon="user-x" tone="slate" />
       </div>
 
       <Card>
@@ -115,9 +240,9 @@ export default function OwnersPage() {
             }}
             options={[
               { value: "all", label: "All", count: allOwners.length },
-              { value: "paid", label: "Paid", count: stats.paidCount },
-              { value: "pending", label: "Pending", count: stats.pendingCount },
-              { value: "unknown", label: "Unknown", count: stats.unknownCount },
+              { value: "paid", label: "Paid", count: stats?.paidCount ?? 0 },
+              { value: "pending", label: "Pending", count: stats?.pendingCount ?? 0 },
+              { value: "unknown", label: "Unknown", count: stats?.unknownCount ?? 0 },
             ]}
           />
           <div className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 sm:w-72">
@@ -201,10 +326,13 @@ export default function OwnersPage() {
         wide
         footer={
           <>
-            <Button variant="secondary" icon="receipt" onClick={() => toast(`Opening receipts for ${selected?.plotNo}`, "info")}>
+            <Button variant="secondary" icon="receipt" onClick={() => setReceiptsFor({ plotNo: selected?.plotNo, name: selected?.name })}>
               View receipts
             </Button>
-            <Button icon="send" onClick={() => { toast(`Reminder sent to ${selected?.name ?? selected?.plotNo}`); setSelected(null); }}>
+            <Button variant="secondary" icon="receipt-indian-rupee" onClick={() => setBillFor(selected)}>
+              Generate bill
+            </Button>
+            <Button icon="send" onClick={() => setRemindFor(selected)}>
               Send reminder
             </Button>
           </>
@@ -254,7 +382,7 @@ export default function OwnersPage() {
             <Button variant="secondary" onClick={() => setAddOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={saveOwner}>Save owner</Button>
+            <Button onClick={saveOwner} loading={saving}>Save owner</Button>
           </>
         }
       >
@@ -282,7 +410,62 @@ export default function OwnersPage() {
             </select>
           </Field>
         </div>
+        {/* App access (optional) */}
+        <div className="mt-4 rounded-xl border border-slate-200 p-4">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-brand-600"
+              checked={form.createLogin}
+              onChange={(e) => setForm({ ...form, createLogin: e.target.checked })}
+            />
+            Create an app login for this owner (member access)
+          </label>
+          {form.createLogin && (
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <p className="sm:col-span-2 text-xs text-slate-400">
+                The owner signs in with the <b>email above</b>. Set a temporary password (min 8 chars) — it is securely hashed.
+              </p>
+              <Field label="Password">
+                <PasswordInput placeholder="At least 8 characters" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+              </Field>
+              <Field label="Confirm password">
+                <PasswordInput placeholder="Re-enter password" value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} />
+              </Field>
+            </div>
+          )}
+        </div>
       </Modal>
+
+      {receiptsFor && (
+        <ReceiptsModal plotNo={receiptsFor.plotNo} ownerName={receiptsFor.name} onClose={() => setReceiptsFor(null)} />
+      )}
+
+      <SendReminderModal
+        open={!!remindFor}
+        onClose={() => setRemindFor(null)}
+        onConfirm={sendReminder}
+        sending={sendingReminder}
+        title="Send payment reminder"
+        recipientLabel={remindFor ? `${remindFor.name ?? "Plot " + remindFor.plotNo} · ${remindFor.plotNo}` : ""}
+        amountLabel={remindFor?.amountDue > 0 ? `${formatINR(remindFor.amountDue)} due` : null}
+      />
+
+      {/* Sample bill / payment slip for a plot owner */}
+      <PaymentSlipModal
+        open={!!billFor}
+        onClose={() => setBillFor(null)}
+        invoice={sampleInvoice}
+        role="admin"
+      />
+
+      {importOpen && (
+        <OwnersImportModal
+          existingPlotNos={existingPlotNos}
+          onClose={() => setImportOpen(false)}
+          onDone={reload}
+        />
+      )}
     </div>
   );
 }
