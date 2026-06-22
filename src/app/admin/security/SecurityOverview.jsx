@@ -21,10 +21,45 @@ import { TrafficTrendChart, StatusDonut } from "@/components/charts";
 import { normalizeList } from "@/lib/api";
 import { useApi, useDeferred } from "@/lib/useApi";
 import { downloadCSV, formatDate } from "@/lib/utils";
+import { fmtClock } from "@/lib/shift";
 
 // Skeleton block shown while a lazy section mounts.
 function SectionSkeleton({ className = "h-64" }) {
   return <Card className={`animate-pulse ${className}`} />;
+}
+
+// "1h 45m" from a minute count.
+function fmtDuration(mins) {
+  if (mins == null) return "—";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+
+// One row of the guard attendance log (a single shift session).
+function AttendanceRow({ s }) {
+  const status = s.active ? "on_duty" : s.endedEarly ? "flagged" : "off_duty";
+  const label = s.active ? "On duty" : s.endedEarly ? "Early out" : "Completed";
+  return (
+    <Tr>
+      <Td>
+        <div className="flex items-center gap-3">
+          <Avatar name={s.guardName} size={32} />
+          <div className="min-w-0">
+            <p className="truncate font-medium text-slate-800">{s.guardName}</p>
+            <p className="truncate text-xs text-slate-400">{s.guardId ? `${s.guardId} · ` : ""}{s.shiftName || "—"} shift</p>
+          </div>
+        </div>
+      </Td>
+      <Td className="text-slate-600">
+        {fmtClock(s.startedAt)}
+        <span className="block text-xs text-slate-400">{s.startedAt ? formatDate(s.startedAt) : ""}</span>
+      </Td>
+      <Td className="text-slate-600">{s.endedAt ? fmtClock(s.endedAt) : <span className="text-emerald-600">— on duty —</span>}</Td>
+      <Td className="text-slate-500">{fmtDuration(s.durationMins)}</Td>
+      <Td><Badge tone={status === "on_duty" ? "green" : status === "flagged" ? "amber" : "slate"}>{label}</Badge></Td>
+    </Tr>
+  );
 }
 
 export function SecurityOverview() {
@@ -33,6 +68,10 @@ export function SecurityOverview() {
   const { data: ov, loading, error } = useApi("/admin/security/overview");
   // Heavy, below-the-fold sections (charts/tables) mount after the KPIs paint.
   const showDetail = useDeferred(150);
+  // Guard attendance (login/logout timings) — below the fold, so deferred too.
+  const { data: sessData } = useApi(showDetail ? "/admin/security/guard-sessions" : null);
+  const sessions = sessData ?? [];
+  const onDutyCount = sessions.filter((s) => s.active).length;
 
   const s = ov ?? {};
   const blacklistTotal = (s.blacklistVisitors ?? 0) + (s.blacklistVehicles ?? 0);
@@ -185,6 +224,40 @@ export function SecurityOverview() {
           </>
         )}
       </div>
+
+      {/* Guard attendance — login / logout timings per shift (lazy) */}
+      {showDetail && (
+        <Card className="mt-6">
+          <CardHeader
+            title="Guard attendance"
+            subtitle="Login & logout timings per shift"
+            icon="clock"
+            action={
+              <Badge tone={onDutyCount > 0 ? "green" : "slate"}>
+                {onDutyCount} on duty now
+              </Badge>
+            }
+          />
+          {sessions.length === 0 ? (
+            <EmptyState icon="clock" title="No shifts recorded yet" subtitle="A guard's login and logout times appear here once they sign in." />
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Guard</Th>
+                  <Th>Clock in</Th>
+                  <Th>Clock out</Th>
+                  <Th>On duty</Th>
+                  <Th>Status</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map((s) => <AttendanceRow key={s.id} s={s} />)}
+              </tbody>
+            </Table>
+          )}
+        </Card>
+      )}
 
       {/* Alerts (derived from open high/critical incidents) — lazy */}
       {showDetail && alerts.length > 0 && (

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   PageHeader,
@@ -62,6 +62,18 @@ export default function SecurityOverview() {
 
   const [busyId, setBusyId] = useState(null);
 
+  // Time-of-day greeting, computed client-side so it never mismatches on hydrate.
+  const [greeting, setGreeting] = useState("Welcome");
+  useEffect(() => {
+    const h = new Date().getHours();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- time-of-day greeting, client only
+    setGreeting(h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening");
+  }, []);
+
+  // Real busiest hour from today's visitors-by-hour, instead of a fixed label.
+  const peak = visitorsByHour.reduce((best, cur) => (cur.visitors > (best?.visitors ?? 0) ? cur : best), null);
+  const peakLabel = peak ? `Peak ${peak.hour.replace(/a$/, " AM").replace(/p$/, " PM")}` : null;
+
   const resolve = async (v, approved) => {
     setBusyId(v.id);
     try {
@@ -79,7 +91,7 @@ export default function SecurityOverview() {
     <div className="animate-fade-in">
       <Breadcrumbs items={[{ label: "PlotMate" }, { label: "Security" }, { label: "Dashboard" }]} />
       <PageHeader
-        title={`Good morning, ${(user?.name ?? "Guard").split(" ")[0]}`}
+        title={`${greeting}, ${(user?.name ?? "Guard").split(" ")[0]}`}
         subtitle={`${user?.title ?? "Security"}${user?.guardId ? ` · ${user.guardId}` : ""} · Gate duty`}
         actions={
           <>
@@ -131,14 +143,14 @@ export default function SecurityOverview() {
           <QuickActionButton label="Register Visitor" hint="Log a new entry" icon="user-plus" tone="brand" onClick={() => router.push("/guard/visitors?new=1")} />
           <QuickActionButton label="Scan QR Pass" hint="Verify pre-approved guest" icon="qr-code" tone="sky" onClick={() => router.push("/guard/residents")} />
           <QuickActionButton label="Log Incident" hint="Report a security event" icon="shield-alert" tone="rose" onClick={() => router.push("/guard/incidents?new=1")} />
-          <QuickActionButton label="Call Resident" hint="Quick intercom dial" icon="phone-call" tone="violet" onClick={() => toast("Dialing resident via intercom…", "info")} />
+          <QuickActionButton label="Call Resident" hint="Look up & dial a resident" icon="phone-call" tone="violet" onClick={() => router.push("/guard/residents")} />
         </div>
       </div>
 
       {/* Charts */}
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader title="Visitors by hour" subtitle="Today · all gates" icon="bar-chart-3" action={<Badge tone="brand">Peak 6 PM</Badge>} />
+          <CardHeader title="Visitors by hour" subtitle="Today · all gates" icon="bar-chart-3" action={peakLabel ? <Badge tone="brand">{peakLabel}</Badge> : null} />
           <div className="p-4">
             <VisitorsByHourChart data={visitorsByHour} />
           </div>

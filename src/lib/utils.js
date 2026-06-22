@@ -81,3 +81,26 @@ export function validateAccount({ email, password, confirm }) {
   }
   return null;
 }
+
+/**
+ * Keep only digits and cap the length — wire this into a phone input's
+ * onChange so the field can never hold letters, symbols or more than `max`
+ * digits in the first place.
+ */
+export function digitsOnly(value, max = 10) {
+  return (value || "").replace(/\D/g, "").slice(0, max);
+}
+
+/**
+ * Validate a phone number. Phone is optional unless `required` is set; when
+ * present it must be exactly 10 digits (Indian mobile format).
+ * Returns an error string, or null if valid.
+ */
+export function validatePhone(value, { required = false } = {}) {
+  const digits = digitsOnly(value, 15);
+  if (!digits) return required ? "Phone number is required." : null;
+  if (!/^\d{10}$/.test(digits)) {
+    return "Enter a valid 10-digit phone number.";
+  }
+  return null;
+}

@@ -24,7 +24,7 @@ import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { AvatarUpload } from "@/components/AvatarUpload";
-import { formatINR, formatDate, validateAccount } from "@/lib/utils";
+import { formatINR, formatDate, validateAccount, validatePhone, digitsOnly } from "@/lib/utils";
 
 const emptyForm = {
   name: "", role: "", phone: "", monthlySalary: "", joinedOn: "", type: "staff", status: "active",
@@ -68,6 +68,11 @@ export default function StaffPage() {
   const save = async () => {
     if (!form.name.trim() || !form.role.trim()) {
       toast("Name and role are required", "error");
+      return;
+    }
+    const phoneErr = validatePhone(form.phone);
+    if (phoneErr) {
+      toast(phoneErr, "error");
       return;
     }
     if (!editing && form.createLogin) {
@@ -245,7 +250,7 @@ export default function StaffPage() {
             </select>
           </Field>
           <Field label="Phone">
-            <input className={inputClass} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+91 …" />
+            <input className={inputClass} type="tel" inputMode="numeric" maxLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: digitsOnly(e.target.value) })} placeholder="10-digit mobile" />
           </Field>
           <Field label="Monthly salary (₹)">
             <input type="number" className={inputClass} value={form.monthlySalary} onChange={(e) => setForm({ ...form, monthlySalary: e.target.value })} placeholder="18000" />

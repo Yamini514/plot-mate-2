@@ -29,7 +29,7 @@ import { PaymentSlipModal } from "@/components/PaymentSlip";
 import { useSettings } from "@/lib/useSettings";
 import { OwnersImportModal } from "./OwnersImportModal";
 import { AvatarUpload } from "@/components/AvatarUpload";
-import { formatINR, formatDate, validateAccount, downloadCSV } from "@/lib/utils";
+import { formatINR, formatDate, validateAccount, validatePhone, digitsOnly, downloadCSV } from "@/lib/utils";
 
 // ₹ per sq.yd used for the optional maintenance-due preview (matches the
 // backend Plot model rate).
@@ -90,8 +90,22 @@ export default function OwnersPage() {
       toast("Plot number is required", "error");
       return;
     }
+    // Validate optional contact details if provided, so a typo is caught here
+    // rather than saved as bad data (and a login can't be created without them).
+    const emailVal = form.email.trim();
+    const phoneVal = form.phone.trim();
+    if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) {
+      toast("Enter a valid email address (or leave it blank).", "error");
+      return;
+    }
+    const phoneErr = validatePhone(phoneVal);
+    if (phoneErr) {
+      toast(phoneErr, "error");
+      return;
+    }
     // If granting app access, validate credentials before creating anything.
     if (form.createLogin) {
+      if (!emailVal) { toast("An email is required to create a member login.", "error"); return; }
       const err = validateAccount({ email: form.email, password: form.password, confirm: form.confirmPassword });
       if (err) { toast(err, "error"); return; }
     }
@@ -149,6 +163,11 @@ export default function OwnersPage() {
 
   // Save plot edits; optionally (re)generate this plot's base pay in the same call.
   const saveEdit = async ({ applyDues = false } = {}) => {
+    const phoneErr = validatePhone(editForm.phone);
+    if (phoneErr) {
+      toast(phoneErr, "error");
+      return;
+    }
     const setBusy = applyDues ? setApplyingOne : setSavingEdit;
     setBusy(true);
     try {
@@ -518,7 +537,7 @@ export default function OwnersPage() {
               <input type="number" min="0" className={inputClass} value={editForm.sizeSqyd} onChange={(e) => setEditForm({ ...editForm, sizeSqyd: e.target.value })} />
             </Field>
             <Field label="Phone">
-              <input className={inputClass} value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} placeholder="+91 …" />
+              <input className={inputClass} type="tel" inputMode="numeric" maxLength={10} value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: digitsOnly(e.target.value) })} placeholder="10-digit mobile" />
             </Field>
             <Field label="Email">
               <input className={inputClass} value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} placeholder="name@example.com" />
@@ -574,7 +593,7 @@ export default function OwnersPage() {
             <input className={inputClass} placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </Field>
           <Field label="Phone">
-            <input className={inputClass} placeholder="+91 …" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <input className={inputClass} type="tel" inputMode="numeric" maxLength={10} placeholder="10-digit mobile" value={form.phone} onChange={(e) => setForm({ ...form, phone: digitsOnly(e.target.value) })} />
           </Field>
           <Field label="Email">
             <input className={inputClass} placeholder="name@example.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />

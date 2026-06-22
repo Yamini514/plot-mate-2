@@ -139,5 +139,44 @@ export const api = {
     if (data?.token) setToken(data.token);
     return data;
   },
+
+  /**
+   * End the server session: closes any open guard shift (recording the logout
+   * time + early-clock-out flag) and clears the single-session token. Best
+   * effort — a network failure must never trap the user in the app, so the
+   * local token is always cleared. Returns the server's { ended, endedEarly }
+   * payload (or an empty object on failure).
+   */
+  async endSession() {
+    try {
+      const { data } = await request("POST", "/me/logout");
+      return data ?? {};
+    } catch {
+      return {};
+    } finally {
+      setToken(null);
+    }
+  },
+
   logout: () => setToken(null),
+
+  // --- password recovery (OTP) ---------------------------------------------
+  // Each step throws ApiError (with a friendly .message) on failure so the
+  // forgot-password wizard can surface the exact reason inline.
+
+  /** Step 1 — email a 6-digit code. Rejects if the email isn't registered. */
+  async forgotPassword(email) {
+    await request("POST", "/forgot-password", { body: { email } });
+  },
+
+  /** Step 2 — verify the code; returns a single-use reset token on success. */
+  async verifyOtp(email, otp) {
+    const { data } = await request("POST", "/verify-otp", { body: { email, otp } });
+    return data?.token;
+  },
+
+  /** Step 3 — set the new password using the verified token. */
+  async resetPassword(token, password) {
+    await request("POST", "/reset-password", { body: { token, password } });
+  },
 };

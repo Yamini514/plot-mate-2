@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   PageHeader,
   Breadcrumbs,
@@ -23,6 +23,7 @@ import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import { usePlotVerify, PlotVerifyHint } from "@/components/PlotVerify";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -65,6 +66,21 @@ export default function DeliveryTracking() {
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
+  // Log-form fields with live plot verification (same as the visitor gate flow).
+  const [flat, setFlat] = useState("");
+  const [resident, setResident] = useState("");
+  const verify = usePlotVerify(flat, open);
+
+  useEffect(() => {
+    if (verify.status === "found" && verify.owner) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prefill owner from verified plot
+      setResident((r) => r || verify.owner);
+    }
+  }, [verify]);
+
+  const resetForm = () => { setFlat(""); setResident(""); };
+  const closeLog = () => { setOpen(false); resetForm(); };
+
   const counts = useMemo(() => {
     const c = { all: rows.length };
     rows.forEach((r) => (c[r.status] = (c[r.status] ?? 0) + 1));
@@ -97,20 +113,28 @@ export default function DeliveryTracking() {
   const logPackage = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    const courier = (f.get("courier") || "").toString().trim();
+
+    // Validate before submitting so the guard sees a specific message.
+    if (!courier) return toast("Enter the courier or vendor name.", "error");
+    if (!flat.trim()) return toast("Enter the flat / plot number for delivery.", "error");
+    if (!resident.trim()) return toast("Enter the resident the package is for.", "error");
+
     setSaving(true);
     try {
       const { data } = await api.post("/guard/deliveries", {
-        courier: f.get("courier") || "Other",
-        agent: f.get("agent") || "—",
-        residentName: f.get("resident") || "—",
-        plotNo: f.get("flat") || "—",
+        courier,
+        agent: (f.get("agent") || "").toString().trim() || "—",
+        residentName: resident.trim(),
+        plotNo: flat.trim(),
         status: "received",
       });
       setOpen(false);
+      resetForm();
       toast(`Package ${data.code} logged for ${data.residentName}`);
       reload();
     } catch (err) {
-      toast(err.message || "Could not log package", "error");
+      toast(err.message || "Could not log the package. Please try again.", "error");
     } finally {
       setSaving(false);
     }
@@ -247,12 +271,12 @@ export default function DeliveryTracking() {
       {/* Log package modal */}
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeLog}
         title="Log a Package"
         wide
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={closeLog}>Cancel</Button>
             <Button type="submit" form="log-package" icon="package-plus" loading={saving}>Log Package</Button>
           </>
         }
@@ -264,11 +288,26 @@ export default function DeliveryTracking() {
           <Field label="Delivery agent (optional)">
             <input name="agent" className={inputClass} placeholder="e.g. Sameer K." />
           </Field>
-          <Field label="Resident">
-            <input name="resident" required className={inputClass} placeholder="e.g. Rohan Gupta" />
-          </Field>
           <Field label="Flat / Plot no.">
-            <input name="flat" required className={inputClass} placeholder="e.g. P-077" />
+            <input
+              name="flat"
+              required
+              value={flat}
+              onChange={(e) => setFlat(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. P-077"
+            />
+            <PlotVerifyHint verify={verify} />
+          </Field>
+          <Field label="Resident">
+            <input
+              name="resident"
+              required
+              value={resident}
+              onChange={(e) => setResident(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. Rohan Gupta"
+            />
           </Field>
           <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 sm:col-span-2">
             <Icon name="info" size={14} />

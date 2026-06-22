@@ -91,10 +91,17 @@ export function AuthProvider({ children }) {
     return persist(session);
   };
 
-  const logout = () => {
+  // Ends the session. Against the real backend this also closes an open guard
+  // shift (recording the logout time + early-clock-out flag); the returned
+  // payload lets the caller react. Local state is always cleared so a backend
+  // hiccup never strands the user in the app.
+  const logout = async () => {
+    let result = {};
+    if (apiEnabled) result = await api.endSession();
+    else setToken(null);
     setUser(null);
-    setToken(null);
     localStorage.removeItem(STORAGE_KEY);
+    return result;
   };
 
   // Merge fields into the active session and re-persist (e.g. after the user

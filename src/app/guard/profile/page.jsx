@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   PageHeader,
   Breadcrumbs,
@@ -11,21 +12,13 @@ import {
   StatusBadge,
   Avatar,
   EmptyState,
+  ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { useApi } from "@/lib/useApi";
-
-// Standard gate shifts. The current shift is derived from the local clock so it
-// always reflects "now" without needing a per-guard shift schedule.
-const SHIFTS = [
-  { name: "Morning", start: "06:00 AM", end: "02:00 PM", from: 6, to: 14 },
-  { name: "Evening", start: "02:00 PM", end: "10:00 PM", from: 14, to: 22 },
-  { name: "Night", start: "10:00 PM", end: "06:00 AM", from: 22, to: 6 },
-];
-function shiftForHour(h) {
-  return SHIFTS.find((s) => (s.from < s.to ? h >= s.from && h < s.to : h >= s.from || h < s.to)) ?? SHIFTS[0];
-}
+import { useAuth } from "@/lib/auth";
+import { shiftForNow, isBeforeShiftEnd, fmtClock } from "@/lib/shift";
 
 function InfoRow({ icon, label, value }) {
   return (
@@ -43,6 +36,8 @@ function InfoRow({ icon, label, value }) {
 
 export default function GuardProfile() {
   const toast = useToast();
+  const router = useRouter();
+  const { logout } = useAuth();
   const { data: me } = useApi("/me/info");
   const { data: rosterData } = useApi("/guard/shift-roster");
   const { data: actionsData } = useApi("/guard/recent-actions");
@@ -54,7 +49,7 @@ export default function GuardProfile() {
   const [shift, setShift] = useState(null);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- time-of-day shift, client only
-    setShift(shiftForHour(new Date().getHours()));
+    setShift(shiftForNow());
   }, []);
 
   // Identity comes from the guard's own account; gate/supervisor are optional
@@ -70,14 +65,32 @@ export default function GuardProfile() {
     shift: shift?.name ?? "—",
     shiftStart: shift?.start ?? "—",
     shiftEnd: shift?.end ?? "—",
-    clockIn: shift?.start ?? "—",
+    // Real clock-in: the time this guard signed in (opening the shift).
+    clockIn: me?.lastLoggedInAt ? fmtClock(me.lastLoggedInAt) : shift?.start ?? "—",
     supervisor: { name: me?.supervisorName ?? null, phone: me?.supervisorPhone ?? null },
   };
-  const [onDuty, setOnDuty] = useState(true);
 
-  const toggleShift = () => {
-    setOnDuty((d) => !d);
-    toast(onDuty ? "Shift ended — clocked out" : "Shift started — clocked in");
+  // Ending the shift signs the guard out. Before the scheduled end we confirm
+  // (and the backend records it as an early clock-out).
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [endingEarly, setEndingEarly] = useState(false);
+  const [ending, setEnding] = useState(false);
+
+  const requestEndShift = () => {
+    setEndingEarly(isBeforeShiftEnd());
+    setConfirmOpen(true);
+  };
+
+  const endShift = async () => {
+    setEnding(true);
+    try {
+      await logout();
+      toast("Shift ended — clocked out");
+    } finally {
+      setConfirmOpen(false);
+      setEnding(false);
+      router.replace("/login");
+    }
   };
 
   return (
@@ -92,7 +105,7 @@ export default function GuardProfile() {
           <div className="flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-semibold text-slate-900">{profile.name}</h2>
-              <StatusBadge status={onDuty ? "on_duty" : "off_duty"} />
+              <StatusBadge status="on_duty" />
             </div>
             <p className="mt-0.5 text-sm text-slate-500">{profile.title} · {profile.guardId}</p>
             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
@@ -107,11 +120,11 @@ export default function GuardProfile() {
             <p className="text-xs text-slate-400">{profile.shift} · clocked in {profile.clockIn}</p>
             <Button
               className="mt-3"
-              variant={onDuty ? "danger" : "primary"}
-              icon={onDuty ? "log-out" : "log-in"}
-              onClick={toggleShift}
+              variant="danger"
+              icon="log-out"
+              onClick={requestEndShift}
             >
-              {onDuty ? "End Shift" : "Start Shift"}
+              End Shift
             </Button>
           </div>
         </div>
@@ -178,6 +191,21 @@ export default function GuardProfile() {
           )}
         </Card>
       </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => !ending && setConfirmOpen(false)}
+        onConfirm={endShift}
+        loading={ending}
+        title={endingEarly ? "End shift early?" : "End shift & sign out?"}
+        confirmLabel={endingEarly ? "End shift anyway" : "End shift"}
+        confirmVariant={endingEarly ? "danger" : "primary"}
+        message={
+          endingEarly
+            ? `Your ${profile.shift} shift runs until ${profile.shiftEnd}. Ending now will be recorded as an early clock-out on the attendance log, and you'll be signed out.`
+            : "You'll be clocked out and signed out. Your login and logout times stay on the attendance log."
+        }
+      />
     </div>
   );
 }

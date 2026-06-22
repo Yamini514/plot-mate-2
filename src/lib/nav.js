@@ -2,7 +2,8 @@
 // useNavBadges() and merged in by AppShell (keyed on href).
 export const adminNav = [
   { label: "Dashboard", href: "/admin", icon: "layout-dashboard", group: "Overview" },
-  { label: "Plot Map", href: "/admin/plots", icon: "map", group: "Overview" },
+  { label: "Plot Map", href: "/admin/plot-map", icon: "map", group: "Overview" },
+  { label: "Plot Grid", href: "/admin/plots", icon: "grid-2x2", group: "Overview" },
   { label: "Plot Owners", href: "/admin/owners", icon: "users", group: "Community" },
   { label: "Treasury", href: "/admin/treasury", icon: "wallet", group: "Finance" },
   { label: "Reminders", href: "/admin/reminders", icon: "bell-ring", group: "Finance" },

@@ -66,16 +66,27 @@ export default function IncidentReporting() {
   }, [rows]);
 
   const openCount = rows.filter((r) => ["open", "investigating", "escalated"].includes(r.status)).length;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const loggedToday = rows.filter((r) => (r.occurredAt || r.createdAt || "").slice(0, 10) === todayStr).length;
   const filtered = filter === "all" ? rows : rows.filter((r) => r.status === filter);
 
   const log = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    const location = (f.get("location") || "").toString().trim();
+    const description = (f.get("description") || "").toString().trim();
+
+    // Validate before submitting so the guard gets a clear, specific message.
+    if (!location) return toast("Enter where the incident happened.", "error");
+    if (description.length < 10)
+      return toast("Add a short description (at least 10 characters) of what happened.", "error");
+
     setSaving(true);
     try {
       const { data } = await api.post("/guard/incidents", {
         incidentType: f.get("type") || "Other",
-        location: f.get("location") || "—",
+        location,
+        description,
         severity,
       });
       setOpen(false);
@@ -83,7 +94,7 @@ export default function IncidentReporting() {
       toast(`Incident ${data.code} logged`);
       reload();
     } catch (err) {
-      toast(err.message || "Could not log incident", "error");
+      toast(err.message || "Could not log the incident. Please try again.", "error");
     } finally {
       setSaving(false);
     }
@@ -120,7 +131,7 @@ export default function IncidentReporting() {
 
       <div className="mb-4 grid grid-cols-2 gap-4 xl:grid-cols-4">
         <StatCard label="Open incidents" value={openCount} icon="shield-alert" tone="rose" />
-        <StatCard label="Logged today" value={rows.filter((r) => r.time.startsWith("Today")).length} icon="file-plus" tone="amber" />
+        <StatCard label="Logged today" value={loggedToday} icon="file-plus" tone="amber" />
         <StatCard label="Critical / High" value={rows.filter((r) => r.severity === "critical" || r.severity === "high").length} icon="siren" tone="rose" />
         <StatCard label="Resolved" value={counts.resolved ?? 0} icon="circle-check-big" tone="brand" />
       </div>

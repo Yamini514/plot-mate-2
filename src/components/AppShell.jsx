@@ -9,8 +9,9 @@ import { useNavBadges } from "@/lib/useNavBadges";
 import { useApi, useDebounced } from "@/lib/useApi";
 import { normalizeList } from "@/lib/api";
 import { Icon } from "./Icon";
-import { Avatar } from "./ui";
+import { Avatar, ConfirmDialog } from "./ui";
 import { cn } from "@/lib/utils";
+import { isBeforeShiftEnd, scheduledEndForNow, fmtClock } from "@/lib/shift";
 
 // Per-role "record" source for global search. Pages are always searched on top
 // of this (client-side from the nav).
@@ -106,6 +107,34 @@ export function AppShell({ nav, role, children }) {
     }
   };
 
+  // --- Sign out -------------------------------------------------------------
+  // Guards sign out by ending their shift. If they do so before the shift's
+  // scheduled end, we confirm first (and record it as an early clock-out). Any
+  // sign-out lands them back on the login page.
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [earlyOut, setEarlyOut] = useState(false);
+
+  const requestLogout = () => {
+    if (role === "guard") {
+      setEarlyOut(isBeforeShiftEnd());
+      setLogoutOpen(true);
+    } else {
+      doLogout();
+    }
+  };
+
+  const doLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      setLogoutOpen(false);
+      setLoggingOut(false);
+      router.replace("/login");
+    }
+  };
+
   // Route guard
   useEffect(() => {
     if (!ready) return;
@@ -195,8 +224,8 @@ export function AppShell({ nav, role, children }) {
             <p className="truncate text-xs text-slate-400">{user.title}</p>
           </div>
           <button
-            onClick={logout}
-            title="Log out"
+            onClick={requestLogout}
+            title={role === "guard" ? "End shift & sign out" : "Log out"}
             className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"
           >
             <Icon name="log-out" size={16} />
@@ -412,6 +441,22 @@ export function AppShell({ nav, role, children }) {
           {children}
         </main>
       </div>
+
+      {/* Guard sign-out — confirm (and flag) an early clock-out */}
+      <ConfirmDialog
+        open={logoutOpen}
+        onClose={() => !loggingOut && setLogoutOpen(false)}
+        onConfirm={doLogout}
+        loading={loggingOut}
+        title={earlyOut ? "End shift early?" : "End shift & sign out?"}
+        confirmLabel={earlyOut ? "End shift anyway" : "End shift"}
+        confirmVariant={earlyOut ? "danger" : "primary"}
+        message={
+          earlyOut
+            ? `Your shift runs until ${fmtClock(scheduledEndForNow())}. Signing out now will be recorded as an early clock-out and your supervisor can see it on the attendance log.`
+            : "You'll be signed out and your shift will be closed. Your login and logout times are recorded on the attendance log."
+        }
+      />
     </div>
   );
 }

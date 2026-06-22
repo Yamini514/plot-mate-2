@@ -23,6 +23,7 @@ import { useToast } from "@/components/Toast";
 import { visitorPurposes } from "@/lib/guard-data";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import { usePlotVerify, PlotVerifyHint } from "@/components/PlotVerify";
 
 const STATUS_ACTION = { approved: "approve", rejected: "reject", inside: "checkin", checked_out: "checkout" };
 
@@ -61,12 +62,32 @@ export default function VisitorManagement() {
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
+  // Register-form fields that drive (and are driven by) plot verification.
+  const [flat, setFlat] = useState("");
+  const [resident, setResident] = useState("");
+  const verify = usePlotVerify(flat, open);
+
   // Open the register modal automatically when linked from a quick action.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- open modal on arrival from a quick action
     if (params.get("new") === "1") setOpen(true);
   }, []);
+
+  // When the plot is on file, offer its owner as the visiting resident (only
+  // if the guard hasn't already typed a name).
+  useEffect(() => {
+    if (verify.status === "found" && verify.owner) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prefill owner from verified plot
+      setResident((r) => r || verify.owner);
+    }
+  }, [verify]);
+
+  const resetForm = () => {
+    setFlat("");
+    setResident("");
+    setVerify({ status: "idle" });
+  };
 
   const counts = useMemo(() => {
     const c = { all: rows.length };
@@ -102,17 +123,28 @@ export default function VisitorManagement() {
   const register = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    const name = (f.get("name") || "").toString().trim();
+    const phone = (f.get("phone") || "").toString().trim();
+
+    // Validate before submitting so the guard sees a specific message.
+    if (!name) return toast("Enter the visitor's name.", "error");
+    if (!/^[+\d][\d\s-]{7,14}$/.test(phone))
+      return toast("Enter a valid phone number (at least 8 digits).", "error");
+    if (!flat.trim()) return toast("Enter the flat / plot number being visited.", "error");
+    if (!resident.trim()) return toast("Enter the resident being visited.", "error");
+
     setSaving(true);
     try {
       const { data } = await api.post("/guard/visitors", {
-        name: f.get("name") || "New Visitor",
-        phone: f.get("phone") || "—",
-        residentName: f.get("resident") || "—",
-        plotNo: f.get("flat") || "—",
+        name,
+        phone,
+        residentName: resident.trim(),
+        plotNo: flat.trim(),
         purpose: f.get("purpose") || "Guest",
         vehicleNo: f.get("vehicle") || null,
       });
       setOpen(false);
+      resetForm();
       toast(`Visitor ${data.name} registered — awaiting approval`);
       reload();
     } catch (err) {
@@ -121,6 +153,8 @@ export default function VisitorManagement() {
       setSaving(false);
     }
   };
+
+  const closeRegister = () => { setOpen(false); resetForm(); };
 
   return (
     <div className="animate-fade-in">
@@ -250,12 +284,12 @@ export default function VisitorManagement() {
       {/* Register modal */}
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeRegister}
         title="Register New Visitor"
         wide
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={closeRegister}>Cancel</Button>
             <Button type="submit" form="register-visitor" icon="user-plus" loading={saving}>Register</Button>
           </>
         }
@@ -267,11 +301,26 @@ export default function VisitorManagement() {
           <Field label="Phone number">
             <input name="phone" required className={inputClass} placeholder="+91 9XXXX XXXXX" />
           </Field>
-          <Field label="Visiting resident">
-            <input name="resident" required className={inputClass} placeholder="e.g. Naveen Varma" />
-          </Field>
           <Field label="Flat / Plot no.">
-            <input name="flat" required className={inputClass} placeholder="e.g. P-047" />
+            <input
+              name="flat"
+              required
+              value={flat}
+              onChange={(e) => setFlat(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. P-047"
+            />
+            <PlotVerifyHint verify={verify} />
+          </Field>
+          <Field label="Visiting resident">
+            <input
+              name="resident"
+              required
+              value={resident}
+              onChange={(e) => setResident(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. Naveen Varma"
+            />
           </Field>
           <Field label="Purpose of visit">
             <select name="purpose" className={inputClass} defaultValue="Guest">
