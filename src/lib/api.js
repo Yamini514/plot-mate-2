@@ -164,9 +164,12 @@ export const api = {
   // Each step throws ApiError (with a friendly .message) on failure so the
   // forgot-password wizard can surface the exact reason inline.
 
-  /** Step 1 — email a 6-digit code. Rejects if the email isn't registered. */
-  async forgotPassword(email) {
-    await request("POST", "/forgot-password", { body: { email } });
+  /**
+   * Step 1 — send a 6-digit code over the chosen channel ("email" | "whatsapp").
+   * Rejects if the email isn't registered (or, for WhatsApp, no phone is on file).
+   */
+  async forgotPassword(email, channel = "email") {
+    await request("POST", "/forgot-password", { body: { email, channel } });
   },
 
   /** Step 2 — verify the code; returns a single-use reset token on success. */

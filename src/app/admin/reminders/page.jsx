@@ -59,23 +59,26 @@ export default function RemindersPage() {
           selectedChannels.map((ch) =>
             api.post("/admin/reminders", {
               plotNo: p.plotNo, ownerName: p.ownerName, amount: p.amountDue,
-              channel: ch, status, email: p.email || undefined,
+              channel: ch, status,
+              email: p.email || undefined, phone: p.phone || undefined,
             }).then(({ data }) => data?.delivery).catch(() => null),
           ),
         ),
       );
       const via = selectedChannels.length > 1 ? `${selectedChannels.length} channels` : (channels.find((c) => c.id === selectedChannels[0])?.label ?? selectedChannels[0]);
-      // Count real email sends + failures so the admin knows what actually went out.
-      if (selectedChannels.includes("email") && status === "sent") {
-        const emailed = results.filter((d) => d?.channel === "email" && d?.sent).length;
-        const failed = results.filter((d) => d?.channel === "email" && d?.ok === false).length;
+      // Count real sends (email + WhatsApp) and failures so the admin knows what
+      // actually went out. SMS has no gateway yet, so it's only recorded.
+      if (status === "sent") {
+        const delivered = results.filter((d) => d?.sent).length;
+        const failed = results.filter((d) => d?.ok === false).length;
         toast(
-          `Reminder ${status === "sent" ? "sent" : "scheduled"} for ${recipientCount} owners via ${via}` +
-            (emailed ? ` · ${emailed} emailed` : "") + (failed ? ` · ${failed} email(s) failed (check Settings → Email)` : ""),
-          failed && !emailed ? "error" : "success",
+          `Reminder sent for ${recipientCount} owners via ${via}` +
+            (delivered ? ` · ${delivered} delivered` : "") +
+            (failed ? ` · ${failed} failed (check Settings)` : ""),
+          failed && !delivered ? "error" : "success",
         );
       } else {
-        toast(`Reminder ${status === "sent" ? "sent" : "scheduled"} for ${recipientCount} owners via ${via}`);
+        toast(`Reminder scheduled for ${recipientCount} owners via ${via}`);
       }
       setConfirmOpen(false);
       reload();

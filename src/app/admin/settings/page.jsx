@@ -33,6 +33,7 @@ const tabs = [
   { id: "committee", label: "Committee", icon: "users" },
   { id: "bank", label: "Bank & UPI", icon: "landmark" },
   { id: "email", label: "Email / SMTP", icon: "mail-check" },
+  { id: "whatsapp", label: "WhatsApp", icon: "message-circle" },
   { id: "helplines", label: "Helplines", icon: "phone-call" },
   { id: "notifications", label: "Notifications", icon: "bell" },
 ];
@@ -130,6 +131,20 @@ export default function SettingsPage() {
         smtpPasswordSet: live.smtp?.passwordSet ?? false,
         smtpFromName: live.smtp?.fromName ?? "",
         smtpFromEmail: live.smtp?.fromEmail ?? "",
+        // WhatsApp (Meta Cloud API) — access token is never sent back; we only
+        // know whether one is stored.
+        waEnabled: live.whatsapp?.enabled ?? false,
+        waPhoneNumberId: live.whatsapp?.phoneNumberId ?? "",
+        waBusinessAccountId: live.whatsapp?.businessAccountId ?? "",
+        waAccessToken: "",
+        waAccessTokenSet: live.whatsapp?.accessTokenSet ?? false,
+        waApiVersion: live.whatsapp?.apiVersion ?? "v25.0",
+        waCountryCode: live.whatsapp?.countryCode ?? "91",
+        waOtpTemplate: live.whatsapp?.otpTemplate ?? "plotmate_otp",
+        waOtpLang: live.whatsapp?.otpLang ?? "en_US",
+        waOtpCopyCode: live.whatsapp?.otpCopyCode ?? true,
+        waReminderTemplate: live.whatsapp?.reminderTemplate ?? "plotmate_reminder",
+        waReminderLang: live.whatsapp?.reminderLang ?? "en_US",
       });
     }
   }, [live, form]);
@@ -216,6 +231,7 @@ export default function SettingsPage() {
   };
 
   const smtpConfigured = !!((f.smtpHost || "").trim() && (f.smtpUsername || "").trim() && (f.smtpPasswordSet || f.smtpPassword));
+  const waConfigured = !!((f.waPhoneNumberId || "").trim() && (f.waAccessTokenSet || f.waAccessToken));
   const committee = f.committee ?? [];
   const addMember = () => setForm((p) => ({ ...p, committee: [...(p.committee ?? []), { role: "", name: "", phone: "" }] }));
   const updateMember = (i, key, val) => setForm((p) => ({ ...p, committee: (p.committee ?? []).map((m, idx) => (idx === i ? { ...m, [key]: val } : m)) }));
@@ -258,9 +274,27 @@ export default function SettingsPage() {
           fromName: (f.smtpFromName || "").trim(),
           fromEmail: (f.smtpFromEmail || "").trim(),
         },
+        whatsapp: {
+          enabled: !!f.waEnabled,
+          phoneNumberId: (f.waPhoneNumberId || "").trim(),
+          businessAccountId: (f.waBusinessAccountId || "").trim(),
+          // Blank token = keep the stored one (backend preserves it).
+          accessToken: f.waAccessToken || "",
+          apiVersion: (f.waApiVersion || "v25.0").trim(),
+          countryCode: (f.waCountryCode || "91").trim(),
+          otpTemplate: (f.waOtpTemplate || "").trim(),
+          otpLang: (f.waOtpLang || "").trim(),
+          otpCopyCode: !!f.waOtpCopyCode,
+          reminderTemplate: (f.waReminderTemplate || "").trim(),
+          reminderLang: (f.waReminderLang || "").trim(),
+        },
       });
-      // Clear the password field after save; the stored one is now set.
-      setForm((p) => ({ ...p, smtpPassword: "", smtpPasswordSet: p.smtpPasswordSet || !!p.smtpPassword }));
+      // Clear the secret fields after save; the stored ones are now set.
+      setForm((p) => ({
+        ...p,
+        smtpPassword: "", smtpPasswordSet: p.smtpPasswordSet || !!p.smtpPassword,
+        waAccessToken: "", waAccessTokenSet: p.waAccessTokenSet || !!p.waAccessToken,
+      }));
       toast("Settings saved");
     } catch (e) {
       toast(e.message || "Could not save settings", "error");
@@ -644,6 +678,123 @@ export default function SettingsPage() {
                 <p className="flex items-start gap-1.5 text-xs text-slate-400">
                   <Icon name="shield-check" size={13} className="mt-0.5 shrink-0" />
                   Your password is stored on the server and never sent back to the browser. Prefer a dedicated app password or API key over your main login.
+                </p>
+              </div>
+            </Card>
+          )}
+
+          {tab === "whatsapp" && (
+            <Card>
+              <CardHeader
+                title="WhatsApp"
+                subtitle="Send password-reset codes and dues reminders over WhatsApp (Meta Cloud API)"
+                icon="message-circle"
+                action={
+                  waConfigured ? (
+                    <Badge tone={f.waEnabled ? "green" : "amber"}>
+                      <Icon name={f.waEnabled ? "circle-check-big" : "pause"} size={11} />
+                      {f.waEnabled ? "Active" : "Configured · off"}
+                    </Badge>
+                  ) : (
+                    <Badge tone="slate"><Icon name="circle-dashed" size={11} /> Not configured</Badge>
+                  )
+                }
+              />
+              <div className="space-y-5 p-5">
+                {/* Enable toggle */}
+                <div className="flex items-center justify-between rounded-xl border border-slate-200 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-slate-800">Enable WhatsApp sending</p>
+                    <p className="text-xs text-slate-400">When off, the app won’t attempt to send any WhatsApp messages.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => set("waEnabled", !f.waEnabled)}
+                    className={`relative h-6 w-11 rounded-full transition-colors ${f.waEnabled ? "bg-brand-500" : "bg-slate-200"}`}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${f.waEnabled ? "left-[22px]" : "left-0.5"}`} />
+                  </button>
+                </div>
+
+                <p className="flex items-start gap-1.5 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                  <Icon name="info" size={13} className="mt-0.5 shrink-0" />
+                  From Meta Business → WhatsApp Manager, copy your <b>Phone number ID</b> and a <b>permanent access token</b>. Reminders and OTPs are business-initiated, so they must use templates you’ve had approved (the names below).
+                </p>
+
+                {/* API credentials */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="Phone number ID" hint="WhatsApp Manager → API setup">
+                    <input className={inputClass} value={f.waPhoneNumberId ?? ""} onChange={(e) => set("waPhoneNumberId", e.target.value)} placeholder="e.g. 1132631029938612" autoComplete="off" />
+                  </Field>
+                  <Field label="Business Account ID (WABA)" hint="For reference / template management">
+                    <input className={inputClass} value={f.waBusinessAccountId ?? ""} onChange={(e) => set("waBusinessAccountId", e.target.value)} placeholder="e.g. 1749574346456599" autoComplete="off" />
+                  </Field>
+                  <Field label="Country code" hint="Prefixed to 10-digit local numbers">
+                    <input className={inputClass} value={f.waCountryCode ?? ""} onChange={(e) => set("waCountryCode", e.target.value)} placeholder="91" />
+                  </Field>
+                  <div className="sm:col-span-2">
+                    <Field label="Access token" hint={f.waAccessTokenSet ? "A token is saved — leave blank to keep it." : "Permanent (system-user) token from Meta."}>
+                      <PasswordInput
+                        value={f.waAccessToken ?? ""}
+                        onChange={(e) => set("waAccessToken", e.target.value)}
+                        placeholder={f.waAccessTokenSet ? "•••••••• (unchanged)" : "EAAG… permanent token"}
+                      />
+                    </Field>
+                  </div>
+                  <Field label="Graph API version">
+                    <input className={inputClass} value={f.waApiVersion ?? ""} onChange={(e) => set("waApiVersion", e.target.value)} placeholder="v25.0" />
+                  </Field>
+                </div>
+
+                {/* OTP template */}
+                <div className="rounded-xl border border-slate-200 p-4">
+                  <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <Icon name="shield-check" size={13} /> Password-reset OTP template
+                  </p>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field label="Template name">
+                      <input className={inputClass} value={f.waOtpTemplate ?? ""} onChange={(e) => set("waOtpTemplate", e.target.value)} placeholder="plotmate_otp" />
+                    </Field>
+                    <Field label="Language code">
+                      <input className={inputClass} value={f.waOtpLang ?? ""} onChange={(e) => set("waOtpLang", e.target.value)} placeholder="en_US" />
+                    </Field>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2.5">
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">Copy-code button</p>
+                      <p className="text-xs text-slate-400">On for Meta’s Authentication templates (the code is also passed to the button).</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => set("waOtpCopyCode", !f.waOtpCopyCode)}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${f.waOtpCopyCode ? "bg-brand-500" : "bg-slate-200"}`}
+                    >
+                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${f.waOtpCopyCode ? "left-[22px]" : "left-0.5"}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Reminder template */}
+                <div className="rounded-xl border border-slate-200 p-4">
+                  <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <Icon name="bell-ring" size={13} /> Dues-reminder template
+                  </p>
+                  <p className="mb-3 text-xs text-slate-400">
+                    Body variables, in order: <b>{"{{1}}"}</b> owner name · <b>{"{{2}}"}</b> amount · <b>{"{{3}}"}</b> plot no · <b>{"{{4}}"}</b> association.
+                  </p>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field label="Template name">
+                      <input className={inputClass} value={f.waReminderTemplate ?? ""} onChange={(e) => set("waReminderTemplate", e.target.value)} placeholder="plotmate_reminder" />
+                    </Field>
+                    <Field label="Language code">
+                      <input className={inputClass} value={f.waReminderLang ?? ""} onChange={(e) => set("waReminderLang", e.target.value)} placeholder="en_US" />
+                    </Field>
+                  </div>
+                </div>
+
+                <p className="flex items-start gap-1.5 text-xs text-slate-400">
+                  <Icon name="shield-check" size={13} className="mt-0.5 shrink-0" />
+                  Your access token is stored on the server and never sent back to the browser. Use a permanent system-user token, not a 24-hour test token.
                 </p>
               </div>
             </Card>

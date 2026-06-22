@@ -22,6 +22,7 @@ export default function ForgotPasswordPage() {
   const router = useRouter();
 
   const [step, setStep] = useState("email"); // email | verify | reset | done
+  const [channel, setChannel] = useState("email"); // delivery channel for the code
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [token, setToken] = useState("");
@@ -58,12 +59,16 @@ export default function ForgotPasswordPage() {
 
     setLoading(true);
     try {
-      await api.forgotPassword(em);
+      await api.forgotPassword(em, channel);
       setEmail(em);
       setStep("verify");
       setOtp("");
       setCooldown(RESEND_SECONDS);
-      setNotice(`We’ve sent a 6-digit code to ${em}.`);
+      setNotice(
+        channel === "whatsapp"
+          ? "We’ve sent a 6-digit code to the WhatsApp number on your account."
+          : `We’ve sent a 6-digit code to ${em}.`,
+      );
     } catch (err) {
       setError(err.message || "We couldn’t send the code. Please try again.");
     } finally {
@@ -257,6 +262,43 @@ export default function ForgotPasswordPage() {
                   </div>
                 </label>
 
+                {/* Delivery channel — email the code, or send it to the WhatsApp
+                    number registered on the account. */}
+                <div>
+                  <span className="mb-1.5 block text-xs font-medium text-slate-600">
+                    Send the code via
+                  </span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { id: "email", label: "Email", icon: "mail" },
+                      { id: "whatsapp", label: "WhatsApp", icon: "message-circle" },
+                    ].map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          setChannel(c.id);
+                          setError("");
+                        }}
+                        className={cn(
+                          "flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors",
+                          channel === c.id
+                            ? "border-brand-400 bg-brand-50 text-brand-700"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-50",
+                        )}
+                      >
+                        <Icon name={c.icon} size={16} />
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                  {channel === "whatsapp" && (
+                    <p className="mt-1.5 text-xs text-slate-400">
+                      We’ll message the phone number registered on your account.
+                    </p>
+                  )}
+                </div>
+
                 <Banner error={error} notice={notice} />
 
                 <button
@@ -284,7 +326,10 @@ export default function ForgotPasswordPage() {
               </h2>
               <p className="mt-1 text-sm text-slate-500">
                 We sent a {OTP_LENGTH}-digit code to{" "}
-                <span className="font-medium text-slate-700">{email}</span>.{" "}
+                <span className="font-medium text-slate-700">
+                  {channel === "whatsapp" ? "your registered WhatsApp number" : email}
+                </span>
+                .{" "}
                 <button
                   type="button"
                   onClick={() => {
