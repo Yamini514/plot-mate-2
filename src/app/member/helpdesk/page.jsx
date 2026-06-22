@@ -15,54 +15,74 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { myTickets as seed, CATEGORIES, PRIORITIES } from "@/lib/helpdesk-data";
+import { CATEGORIES, PRIORITIES } from "@/lib/helpdesk-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 
 const catMeta = (v) => CATEGORIES.find((c) => c.value === v) ?? { label: v, icon: "circle-help" };
 
 export default function MemberHelpdesk() {
   const toast = useToast();
-  const [rows, setRows] = useState(seed);
+  const { data: raw, reload } = useApi("/member/helpdesk");
+  const rows = normalizeList(raw); // backend returns this member's own
   const [open, setOpen] = useState(false);
   const [verify, setVerify] = useState(null); // ticket to accept/reject
   const [rating, setRating] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [accepting, setAccepting] = useState(false);
+  const [reopening, setReopening] = useState(false);
 
-  const create = (e) => {
+  const create = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const cat = f.get("category");
-    const newRow = {
-      id: `TKT-${4822 + rows.length}`,
-      subject: f.get("subject") || "New request",
-      description: f.get("description") || "",
-      category: cat,
-      priority: f.get("priority") || "medium",
-      status: "created",
-      location: f.get("location") || "—",
-      createdBy: "Naveen Varma (Owner)",
-      assignee: null,
-      created: "Just now",
-      slaRemaining: "On track",
-      slaState: "ok",
-      reopenCount: 0,
-      rating: null,
-    };
-    setRows((rs) => [newRow, ...rs]);
-    setOpen(false);
-    toast(`${newRow.id} created — routed to ${catMeta(cat).team}`);
+    setSaving(true);
+    try {
+      const { data } = await api.post("/member/helpdesk", {
+        subject: f.get("subject") || "New request",
+        description: f.get("description") || "",
+        category: cat,
+        priority: f.get("priority") || "medium",
+        location: f.get("location") || "—",
+      });
+      setOpen(false);
+      toast(`${data.code} created — routed to ${catMeta(cat).team}`);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not create request", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const accept = () => {
-    setRows((rs) => rs.map((r) => (r.id === verify.id ? { ...r, status: "closed", rating } : r)));
-    toast(`Resolution accepted · thanks for the ${rating}★ rating`);
-    setVerify(null);
-    setRating(0);
+  const accept = async () => {
+    setAccepting(true);
+    try {
+      await api.post(`/member/helpdesk/${verify.dbId}/verify`, { action: "accept", rating });
+      toast(`Resolution accepted · thanks for the ${rating}★ rating`);
+      setVerify(null);
+      setRating(0);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not accept", "error");
+    } finally {
+      setAccepting(false);
+    }
   };
 
-  const reopen = () => {
-    setRows((rs) => rs.map((r) => (r.id === verify.id ? { ...r, status: "reopened", reopenCount: r.reopenCount + 1 } : r)));
-    toast(`${verify.id} reopened — sent back to the team`, "info");
-    setVerify(null);
-    setRating(0);
+  const reopen = async () => {
+    setReopening(true);
+    try {
+      await api.post(`/member/helpdesk/${verify.dbId}/verify`, { action: "reopen" });
+      toast(`${verify.id} reopened — sent back to the team`, "info");
+      setVerify(null);
+      setRating(0);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not reopen", "error");
+    } finally {
+      setReopening(false);
+    }
   };
 
   const openCount = rows.filter((t) => !["closed", "cancelled"].includes(t.status)).length;
@@ -128,7 +148,7 @@ export default function MemberHelpdesk() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="create-ticket" icon="send">Submit request</Button>
+            <Button type="submit" form="create-ticket" icon="send" loading={saving}>Submit request</Button>
           </>
         }
       >
@@ -175,8 +195,8 @@ export default function MemberHelpdesk() {
         title="Verify Resolution"
         footer={
           <>
-            <Button variant="secondary" icon="rotate-ccw" onClick={reopen}>Reject &amp; reopen</Button>
-            <Button icon="check" onClick={accept}>Accept resolution</Button>
+            <Button variant="secondary" icon="rotate-ccw" loading={reopening} onClick={reopen}>Reject &amp; reopen</Button>
+            <Button icon="check" loading={accepting} onClick={accept}>Accept resolution</Button>
           </>
         }
       >

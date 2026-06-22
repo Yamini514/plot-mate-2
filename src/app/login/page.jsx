@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth, DEMO_ACCOUNTS, homePath } from "@/lib/auth";
-import { association } from "@/lib/mock-data";
 import { Icon } from "@/components/Icon";
 import { cn } from "@/lib/utils";
 
@@ -20,18 +20,26 @@ export default function LoginPage() {
     if (ready && user) router.replace(homePath(user.role));
   }, [ready, user, router]);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     setError("");
+
+    // Validate on the client first so the user gets a specific, friendly
+    // message before we ever hit the network.
+    const em = email.trim();
+    if (!em) return setError("Please enter your email address.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em))
+      return setError("That doesn’t look like a valid email address.");
+    if (!password) return setError("Please enter your password.");
+
     setLoading(true);
-    const res = login(email, password);
+    const res = await login(em, password);
     if (!res.ok) {
-      setError(res.error ?? "Login failed");
+      setError(res.error ?? "We couldn’t sign you in. Please try again.");
       setLoading(false);
       return;
     }
-    const acct = DEMO_ACCOUNTS.find((a) => a.email === email.trim().toLowerCase());
-    router.replace(homePath(acct?.role));
+    router.replace(homePath(res.user.role));
   };
 
   const fill = (role) => {
@@ -85,7 +93,7 @@ export default function LoginPage() {
         </div>
 
         <p className="relative text-xs text-brand-200">
-          {association.name} · {association.location}
+          PlotMate · Plot-owners&rsquo; association management
         </p>
       </div>
 
@@ -97,8 +105,8 @@ export default function LoginPage() {
               <Icon name="map-pinned" size={24} />
             </span>
             <div>
-              <p className="text-lg font-bold text-slate-800">Plotmate</p>
-              <p className="text-xs text-slate-400">{association.name}</p>
+              <p className="text-lg font-bold text-slate-800">PlotMate</p>
+              <p className="text-xs text-slate-400">Association management</p>
             </div>
           </div>
 
@@ -128,9 +136,17 @@ export default function LoginPage() {
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-xs font-medium text-slate-600">
-                Password
-              </span>
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-xs font-medium text-slate-600">
+                  Password
+                </span>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs font-medium text-brand-700 hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100">
                 <Icon name="lock" size={16} className="text-slate-400" />
                 <input

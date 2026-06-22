@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   PageHeader,
@@ -21,39 +21,83 @@ import {
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { VisitorsByHourChart, TrafficTrendChart, StatusDonut } from "@/components/charts";
-import {
-  guardProfile,
-  guardStats,
-  visitorsByHour,
-  trafficTrend7d,
-  incidentSeverity,
-  visitors,
-  emergencyAlerts,
-} from "@/lib/guard-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi, useDeferred } from "@/lib/useApi";
+import { useAuth } from "@/lib/auth";
 
 export default function SecurityOverview() {
   const toast = useToast();
   const router = useRouter();
-  const [pending, setPending] = useState(
-    visitors.filter((v) => v.status === "pending").slice(0, 5),
-  );
+  const { user } = useAuth();
+  // Core gate data drives the KPI tiles + pending approvals — fetched first.
+  const { data: rawVis, reload: reloadVis } = useApi("/guard/visitors", { page_size: 300 });
+  const { data: rawDel } = useApi("/guard/deliveries", { page_size: 300 });
+  const { data: rawInc } = useApi("/guard/incidents", { page_size: 300 });
+  // Blacklist count + analytics charts are below the fold — defer so they don't
+  // compete with the core data on first paint.
+  const showDetail = useDeferred(250);
+  const { data: rawBl } = useApi(showDetail ? "/guard/blacklist" : null, { page_size: 300 });
+  const { data: reports } = useApi(showDetail ? "/guard/reports" : null);
+  const visitorsByHour = reports?.visitorsByHour ?? [];
+  const trafficTrend7d = reports?.trafficTrend ?? [];
+  const incidentSeverity = reports?.incidentSeverity ?? [];
 
-  const resolve = (id, name, approved) => {
-    setPending((p) => p.filter((v) => v.id !== id));
-    toast(approved ? `Approved ${name}` : `Rejected ${name}`, approved ? "success" : "error");
+  const vis = normalizeList(rawVis);
+  const del = normalizeList(rawDel);
+  const inc = normalizeList(rawInc);
+  const pending = vis.filter((v) => v.status === "pending").slice(0, 5);
+  const openIncidents = inc.filter((i) => ["open", "investigating", "escalated"].includes(i.status));
+
+  // KPI counts derived entirely from live data — empty DB shows zeros.
+  const kpi = {
+    visitorsToday: vis.length,
+    deliveriesToday: del.length,
+    packagesWaiting: del.filter((d) => d.status === "waiting" || d.status === "received").length,
+    insideNow: vis.filter((v) => v.checkIn && !v.checkOut).length,
+    pendingApprovals: vis.filter((v) => v.status === "pending").length,
+    incidentsToday: inc.length,
+    incidentsOpen: openIncidents.length,
+    blacklistedEntries: normalizeList(rawBl).length,
+  };
+
+  const [busyId, setBusyId] = useState(null);
+
+  // Time-of-day greeting, computed client-side so it never mismatches on hydrate.
+  const [greeting, setGreeting] = useState("Welcome");
+  useEffect(() => {
+    const h = new Date().getHours();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- time-of-day greeting, client only
+    setGreeting(h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening");
+  }, []);
+
+  // Real busiest hour from today's visitors-by-hour, instead of a fixed label.
+  const peak = visitorsByHour.reduce((best, cur) => (cur.visitors > (best?.visitors ?? 0) ? cur : best), null);
+  const peakLabel = peak ? `Peak ${peak.hour.replace(/a$/, " AM").replace(/p$/, " PM")}` : null;
+
+  const resolve = async (v, approved) => {
+    setBusyId(v.id);
+    try {
+      await api.post(`/guard/visitors/${v.dbId}/action`, { action: approved ? "approve" : "reject" });
+      toast(approved ? `Approved ${v.name}` : `Rejected ${v.name}`, approved ? "success" : "error");
+      reloadVis();
+    } catch (e) {
+      toast(e.message || "Could not update", "error");
+    } finally {
+      setBusyId(null);
+    }
   };
 
   return (
     <div className="animate-fade-in">
       <Breadcrumbs items={[{ label: "PlotMate" }, { label: "Security" }, { label: "Dashboard" }]} />
       <PageHeader
-        title={`Good morning, ${guardProfile.name.split(" ")[0]}`}
-        subtitle={`${guardProfile.gate} · ${guardProfile.shift} shift (${guardProfile.shiftStart}–${guardProfile.shiftEnd})`}
+        title={`${greeting}, ${(user?.name ?? "Guard").split(" ")[0]}`}
+        subtitle={`${user?.title ?? "Security"}${user?.guardId ? ` · ${user.guardId}` : ""} · Gate duty`}
         actions={
           <>
             <Badge tone="green" className="px-3 py-1.5">
               <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              On duty since {guardProfile.clockIn}
+              On duty
             </Badge>
             <Button icon="user-plus" onClick={() => router.push("/guard/visitors?new=1")}>
               Register Visitor
@@ -62,34 +106,34 @@ export default function SecurityOverview() {
         }
       />
 
-      {/* Active alert banner */}
-      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4">
-        <span className="grid h-10 w-10 place-items-center rounded-xl bg-rose-100 text-rose-600">
-          <Icon name="shield-alert" size={20} />
-        </span>
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-rose-800">
-            {emergencyAlerts.filter((a) => a.status === "open").length} active alert needs attention
-          </p>
-          <p className="text-xs text-rose-700">
-            East Gate boom barrier is jammed — operate manually until the technician arrives.
-          </p>
+      {/* Active alert banner — only shown when there are live open incidents */}
+      {openIncidents.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-rose-100 text-rose-600">
+            <Icon name="shield-alert" size={20} />
+          </span>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-rose-800">
+              {openIncidents.length} open incident{openIncidents.length > 1 ? "s" : ""} need{openIncidents.length > 1 ? "" : "s"} attention
+            </p>
+            <p className="text-xs text-rose-700">{openIncidents[0].title ?? openIncidents[0].type ?? "Review the incident log."}</p>
+          </div>
+          <Link href="/guard/incidents">
+            <Button size="sm" variant="secondary">
+              View incidents
+            </Button>
+          </Link>
         </div>
-        <Link href="/guard/blacklist">
-          <Button size="sm" variant="secondary">
-            View alerts
-          </Button>
-        </Link>
-      </div>
+      )}
 
       {/* KPI tiles */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Total visitors today" value={guardStats.visitorsToday} icon="users-round" tone="brand" delta={guardStats.visitorsDelta} hint="Across all gates" />
-        <StatCard label="Deliveries today" value={guardStats.deliveriesToday} icon="package" tone="sky" delta={guardStats.deliveriesDelta} hint={`${guardStats.packagesWaiting} awaiting pickup`} />
-        <StatCard label="Residents checked in" value={guardStats.residentsCheckedIn} icon="car" tone="violet" delta={guardStats.residentsDelta} hint={`${guardStats.residentsCheckedIn} vehicles inside`} />
-        <StatCard label="Pending approvals" value={guardStats.pendingApprovals} icon="hourglass" tone="amber" hint="Awaiting resident confirmation" />
-        <StatCard label="Security incidents" value={guardStats.incidentsToday} icon="shield-alert" tone="rose" hint={`${guardStats.incidentsOpen} open · ${guardStats.incidentsToday - guardStats.incidentsOpen} resolved`} />
-        <StatCard label="Blacklisted entries" value={guardStats.blacklistedEntries} icon="ban" tone="slate" hint={`${guardStats.blacklistAttemptsToday} attempt blocked today`} />
+        <StatCard label="Total visitors today" value={kpi.visitorsToday} icon="users-round" tone="brand" hint="Across all gates" />
+        <StatCard label="Deliveries today" value={kpi.deliveriesToday} icon="package" tone="sky" hint={`${kpi.packagesWaiting} awaiting pickup`} />
+        <StatCard label="Currently inside" value={kpi.insideNow} icon="car" tone="violet" hint="Checked in, not yet out" />
+        <StatCard label="Pending approvals" value={kpi.pendingApprovals} icon="hourglass" tone="amber" hint="Awaiting resident confirmation" />
+        <StatCard label="Security incidents" value={kpi.incidentsToday} icon="shield-alert" tone="rose" hint={`${kpi.incidentsOpen} open · ${kpi.incidentsToday - kpi.incidentsOpen} resolved`} />
+        <StatCard label="Blacklisted entries" value={kpi.blacklistedEntries} icon="ban" tone="slate" hint="Flagged vehicles & persons" />
       </div>
 
       {/* Quick actions */}
@@ -99,14 +143,14 @@ export default function SecurityOverview() {
           <QuickActionButton label="Register Visitor" hint="Log a new entry" icon="user-plus" tone="brand" onClick={() => router.push("/guard/visitors?new=1")} />
           <QuickActionButton label="Scan QR Pass" hint="Verify pre-approved guest" icon="qr-code" tone="sky" onClick={() => router.push("/guard/residents")} />
           <QuickActionButton label="Log Incident" hint="Report a security event" icon="shield-alert" tone="rose" onClick={() => router.push("/guard/incidents?new=1")} />
-          <QuickActionButton label="Call Resident" hint="Quick intercom dial" icon="phone-call" tone="violet" onClick={() => toast("Dialing resident via intercom…", "info")} />
+          <QuickActionButton label="Call Resident" hint="Look up & dial a resident" icon="phone-call" tone="violet" onClick={() => router.push("/guard/residents")} />
         </div>
       </div>
 
       {/* Charts */}
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <CardHeader title="Visitors by hour" subtitle="Today · all gates" icon="bar-chart-3" action={<Badge tone="brand">Peak 6 PM</Badge>} />
+          <CardHeader title="Visitors by hour" subtitle="Today · all gates" icon="bar-chart-3" action={peakLabel ? <Badge tone="brand">{peakLabel}</Badge> : null} />
           <div className="p-4">
             <VisitorsByHourChart data={visitorsByHour} />
           </div>
@@ -156,14 +200,14 @@ export default function SecurityOverview() {
                       <p className="font-medium text-slate-800">{v.name}</p>
                       <p className="text-xs text-slate-400">{v.purpose}</p>
                     </Td>
-                    <Td className="text-slate-500">{v.flat}</Td>
+                    <Td className="text-slate-500">{v.plotNo}</Td>
                     <Td className="text-right">
                       <div className="flex justify-end gap-1.5">
-                        <button onClick={() => resolve(v.id, v.name, true)} className="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600 hover:bg-brand-100" title="Approve">
-                          <Icon name="check" size={15} />
+                        <button onClick={() => resolve(v, true)} disabled={busyId === v.id} className="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600 hover:bg-brand-100 disabled:opacity-50" title="Approve">
+                          <Icon name={busyId === v.id ? "loader-circle" : "check"} size={15} className={busyId === v.id ? "animate-spin" : undefined} />
                         </button>
-                        <button onClick={() => resolve(v.id, v.name, false)} className="grid h-8 w-8 place-items-center rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100" title="Reject">
-                          <Icon name="x" size={15} />
+                        <button onClick={() => resolve(v, false)} disabled={busyId === v.id} className="grid h-8 w-8 place-items-center rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 disabled:opacity-50" title="Reject">
+                          <Icon name={busyId === v.id ? "loader-circle" : "x"} size={15} className={busyId === v.id ? "animate-spin" : undefined} />
                         </button>
                       </div>
                     </Td>

@@ -20,7 +20,28 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { visitors as seed, visitorPurposes } from "@/lib/guard-data";
+import { visitorPurposes } from "@/lib/guard-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+import { usePlotVerify, PlotVerifyHint } from "@/components/PlotVerify";
+
+const STATUS_ACTION = { approved: "approve", rejected: "reject", inside: "checkin", checked_out: "checkout" };
+
+function downloadCSV(filename, rows, columns) {
+  const head = columns.map((c) => `"${c.label}"`).join(",");
+  const body = rows.map((r) => columns.map((c) => `"${String(c.get(r) ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([head + "\n" + body], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Check-in may be ISO (admin/store), a label ("08:12 AM", guard seed), or null.
+function fmtTime(t) {
+  if (!t) return "—";
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? t : d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+}
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -33,10 +54,18 @@ const FILTERS = [
 
 export default function VisitorManagement() {
   const toast = useToast();
-  const [rows, setRows] = useState(seed);
+  const { data: raw, reload } = useApi("/guard/visitors", { page_size: 300 });
+  const rows = normalizeList(raw).map((v) => ({ ...v, resident: v.residentName }));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  // Register-form fields that drive (and are driven by) plot verification.
+  const [flat, setFlat] = useState("");
+  const [resident, setResident] = useState("");
+  const verify = usePlotVerify(flat, open);
 
   // Open the register modal automatically when linked from a quick action.
   useEffect(() => {
@@ -44,6 +73,21 @@ export default function VisitorManagement() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- open modal on arrival from a quick action
     if (params.get("new") === "1") setOpen(true);
   }, []);
+
+  // When the plot is on file, offer its owner as the visiting resident (only
+  // if the guard hasn't already typed a name).
+  useEffect(() => {
+    if (verify.status === "found" && verify.owner) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prefill owner from verified plot
+      setResident((r) => r || verify.owner);
+    }
+  }, [verify]);
+
+  const resetForm = () => {
+    setFlat("");
+    setResident("");
+    setVerify({ status: "idle" });
+  };
 
   const counts = useMemo(() => {
     const c = { all: rows.length };
@@ -54,7 +98,7 @@ export default function VisitorManagement() {
   const filtered = rows.filter((v) => {
     const matchQ =
       !query ||
-      [v.name, v.phone, v.resident, v.flat, v.purpose, v.id]
+      [v.name, v.phone, v.resident, v.plotNo, v.purpose, v.id]
         .join(" ")
         .toLowerCase()
         .includes(query.toLowerCase());
@@ -62,29 +106,55 @@ export default function VisitorManagement() {
     return matchQ && matchF;
   });
 
-  const setStatus = (id, status, label) => {
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, status } : r)));
-    toast(label);
+  const setStatus = async (id, status, label) => {
+    const v = rows.find((r) => r.id === id);
+    setBusyId(id);
+    try {
+      await api.post(`/guard/visitors/${v.dbId}/action`, { action: STATUS_ACTION[status] });
+      toast(label);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not update visitor", "error");
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const register = (e) => {
+  const register = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const newRow = {
-      id: `VIS-${2419 + rows.length}`,
-      name: f.get("name") || "New Visitor",
-      phone: f.get("phone") || "—",
-      resident: f.get("resident") || "—",
-      flat: f.get("flat") || "—",
-      purpose: f.get("purpose") || "Guest",
-      checkIn: "Just now",
-      checkOut: "—",
-      status: "pending",
-    };
-    setRows((rs) => [newRow, ...rs]);
-    setOpen(false);
-    toast(`Visitor ${newRow.name} registered — awaiting approval`);
+    const name = (f.get("name") || "").toString().trim();
+    const phone = (f.get("phone") || "").toString().trim();
+
+    // Validate before submitting so the guard sees a specific message.
+    if (!name) return toast("Enter the visitor's name.", "error");
+    if (!/^[+\d][\d\s-]{7,14}$/.test(phone))
+      return toast("Enter a valid phone number (at least 8 digits).", "error");
+    if (!flat.trim()) return toast("Enter the flat / plot number being visited.", "error");
+    if (!resident.trim()) return toast("Enter the resident being visited.", "error");
+
+    setSaving(true);
+    try {
+      const { data } = await api.post("/guard/visitors", {
+        name,
+        phone,
+        residentName: resident.trim(),
+        plotNo: flat.trim(),
+        purpose: f.get("purpose") || "Guest",
+        vehicleNo: f.get("vehicle") || null,
+      });
+      setOpen(false);
+      resetForm();
+      toast(`Visitor ${data.name} registered — awaiting approval`);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not register visitor", "error");
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const closeRegister = () => { setOpen(false); resetForm(); };
 
   return (
     <div className="animate-fade-in">
@@ -94,7 +164,19 @@ export default function VisitorManagement() {
         subtitle="Register, approve and track visitors across all gates"
         actions={
           <>
-            <Button variant="secondary" icon="download" onClick={() => toast("Visitor log exported as CSV")}>
+            <Button variant="secondary" icon="download" onClick={() => {
+              downloadCSV("visitors.csv", filtered, [
+                { label: "Visitor ID", get: (r) => r.id },
+                { label: "Name", get: (r) => r.name },
+                { label: "Phone", get: (r) => r.phone },
+                { label: "Visiting", get: (r) => r.resident },
+                { label: "Flat / Plot", get: (r) => r.plotNo },
+                { label: "Purpose", get: (r) => r.purpose },
+                { label: "Check-in", get: (r) => fmtTime(r.checkIn) },
+                { label: "Status", get: (r) => r.status },
+              ]);
+              toast("Visitor log exported as CSV");
+            }}>
               Export
             </Button>
             <Button icon="user-plus" onClick={() => setOpen(true)}>
@@ -164,30 +246,30 @@ export default function VisitorManagement() {
                   </Td>
                   <Td className="text-slate-500">{v.phone}</Td>
                   <Td>
-                    <p className="text-slate-700">{v.resident}</p>
-                    <p className="text-xs text-slate-400">{v.flat}</p>
+                    <p className="text-slate-700">{v.resident ?? "—"}</p>
+                    <p className="text-xs text-slate-400">{v.plotNo}</p>
                   </Td>
                   <Td className="text-slate-600">{v.purpose}</Td>
-                  <Td className="text-slate-500">{v.checkIn}</Td>
+                  <Td className="text-slate-500">{fmtTime(v.checkIn)}</Td>
                   <Td><StatusBadge status={v.status} /></Td>
                   <Td className="text-right">
                     <div className="flex justify-end gap-1.5">
                       {v.status === "pending" && (
                         <>
-                          <button onClick={() => setStatus(v.id, "approved", `Approved ${v.name}`)} className="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600 hover:bg-brand-100" title="Approve">
-                            <Icon name="check" size={15} />
+                          <button onClick={() => setStatus(v.id, "approved", `Approved ${v.name}`)} disabled={busyId === v.id} className="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-600 hover:bg-brand-100 disabled:opacity-50" title="Approve">
+                            <Icon name={busyId === v.id ? "loader-circle" : "check"} size={15} className={busyId === v.id ? "animate-spin" : undefined} />
                           </button>
-                          <button onClick={() => setStatus(v.id, "rejected", `Rejected ${v.name}`)} className="grid h-8 w-8 place-items-center rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100" title="Reject">
-                            <Icon name="x" size={15} />
+                          <button onClick={() => setStatus(v.id, "rejected", `Rejected ${v.name}`)} disabled={busyId === v.id} className="grid h-8 w-8 place-items-center rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 disabled:opacity-50" title="Reject">
+                            <Icon name={busyId === v.id ? "loader-circle" : "x"} size={15} className={busyId === v.id ? "animate-spin" : undefined} />
                           </button>
                         </>
                       )}
                       {(v.status === "approved" || v.status === "inside") && (
-                        <button onClick={() => setStatus(v.id, "checked_out", `${v.name} checked out`)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-200" title="Check out">
-                          <Icon name="log-out" size={14} /> Check out
+                        <button onClick={() => setStatus(v.id, "checked_out", `${v.name} checked out`)} disabled={busyId === v.id} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-200 disabled:opacity-50" title="Check out">
+                          <Icon name={busyId === v.id ? "loader-circle" : "log-out"} size={14} className={busyId === v.id ? "animate-spin" : undefined} /> Check out
                         </button>
                       )}
-                      <button onClick={() => toast(`Calling ${v.resident}…`, "info")} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Call resident">
+                      <button onClick={() => { window.location.href = `tel:${String(v.phone).replace(/\s/g, "")}`; }} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Call resident">
                         <Icon name="phone" size={15} />
                       </button>
                     </div>
@@ -202,13 +284,13 @@ export default function VisitorManagement() {
       {/* Register modal */}
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeRegister}
         title="Register New Visitor"
         wide
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="register-visitor" icon="user-plus">Register</Button>
+            <Button variant="secondary" onClick={closeRegister}>Cancel</Button>
+            <Button type="submit" form="register-visitor" icon="user-plus" loading={saving}>Register</Button>
           </>
         }
       >
@@ -219,11 +301,26 @@ export default function VisitorManagement() {
           <Field label="Phone number">
             <input name="phone" required className={inputClass} placeholder="+91 9XXXX XXXXX" />
           </Field>
-          <Field label="Visiting resident">
-            <input name="resident" required className={inputClass} placeholder="e.g. Naveen Varma" />
-          </Field>
           <Field label="Flat / Plot no.">
-            <input name="flat" required className={inputClass} placeholder="e.g. P-047" />
+            <input
+              name="flat"
+              required
+              value={flat}
+              onChange={(e) => setFlat(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. P-047"
+            />
+            <PlotVerifyHint verify={verify} />
+          </Field>
+          <Field label="Visiting resident">
+            <input
+              name="resident"
+              required
+              value={resident}
+              onChange={(e) => setResident(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. Naveen Varma"
+            />
           </Field>
           <Field label="Purpose of visit">
             <select name="purpose" className={inputClass} defaultValue="Guest">

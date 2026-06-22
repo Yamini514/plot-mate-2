@@ -11,11 +11,10 @@ import {
   Badge,
   Field,
   inputClass,
-  Progress,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { residentActivity, residentVehicleStats } from "@/lib/guard-data";
+import { useApi } from "@/lib/useApi";
 
 const activityMeta = {
   entry: { icon: "log-in", tone: "bg-brand-50 text-brand-600", verb: "Vehicle entry" },
@@ -29,10 +28,15 @@ export default function ResidentCheckIn() {
   const toast = useToast();
   const [tag, setTag] = useState("");
   const [qr, setQr] = useState("");
-  const [feed, setFeed] = useState(residentActivity);
-  const [inside, setInside] = useState(residentVehicleStats.insideNow);
-
-  const pct = Math.round((inside / residentVehicleStats.capacity) * 100);
+  const { data: gr } = useApi("/guard/residents");
+  const liveActivity = (gr?.activity ?? []).map((a) => ({ ...a, vehicle: a.vehicle ?? "—" }));
+  const [feed, setFeed] = useState([]); // locally logged this session
+  const allFeed = [...feed, ...liveActivity];
+  // All counts derived from the live feed (+ this session's logs) — empty DB shows zeros.
+  const entriesToday = allFeed.filter((a) => a.type === "entry").length;
+  const exitsToday = allFeed.filter((a) => a.type === "exit").length;
+  const guestVehicles = allFeed.filter((a) => a.type === "guest").length;
+  const inside = Math.max(0, entriesToday + guestVehicles - exitsToday);
 
   const logEntry = (type, label, method) => {
     feedSeq += 1;
@@ -48,8 +52,6 @@ export default function ResidentCheckIn() {
       },
       ...f,
     ]);
-    if (type === "entry" || type === "guest") setInside((n) => n + 1);
-    if (type === "exit") setInside((n) => Math.max(0, n - 1));
   };
 
   const handleEntry = () => {
@@ -79,10 +81,10 @@ export default function ResidentCheckIn() {
       />
 
       <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
-        <StatCard label="Vehicles inside" value={inside} icon="car" tone="violet" hint={`${pct}% of capacity`} />
-        <StatCard label="Entries today" value={residentVehicleStats.entriesToday} icon="log-in" tone="brand" />
-        <StatCard label="Exits today" value={residentVehicleStats.exitsToday} icon="log-out" tone="slate" />
-        <StatCard label="Guest vehicles" value={residentVehicleStats.guestVehicles} icon="users-round" tone="sky" />
+        <StatCard label="Vehicles inside" value={inside} icon="car" tone="violet" hint="Currently on premises" />
+        <StatCard label="Entries today" value={entriesToday} icon="log-in" tone="brand" />
+        <StatCard label="Exits today" value={exitsToday} icon="log-out" tone="slate" />
+        <StatCard label="Guest vehicles" value={guestVehicles} icon="users-round" tone="sky" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -133,15 +135,14 @@ export default function ResidentCheckIn() {
             </div>
           </Card>
 
-          {/* Capacity */}
+          {/* Vehicles on premises */}
           <Card className="p-5">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-800">Parking capacity</p>
-              <span className="text-sm font-semibold text-violet-600">{pct}%</span>
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-800">Vehicles on premises</p>
+              <span className="text-sm font-semibold text-violet-600">{inside}</span>
             </div>
-            <Progress value={pct} tone={pct > 85 ? "rose" : "brand"} />
-            <p className="mt-2 text-xs text-slate-400">
-              {residentVehicleStats.insideNow} of {residentVehicleStats.capacity} slots occupied
+            <p className="mt-1 text-xs text-slate-400">
+              {entriesToday + guestVehicles} in · {exitsToday} out today
             </p>
           </Card>
         </div>
@@ -155,7 +156,7 @@ export default function ResidentCheckIn() {
             action={<Badge tone="green"><span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />Live</Badge>}
           />
           <div className="max-h-[560px] divide-y divide-slate-100 overflow-y-auto">
-            {feed.map((a) => {
+            {allFeed.map((a) => {
               const m = activityMeta[a.type];
               return (
                 <div key={a.id} className="flex items-center gap-3 px-5 py-3">

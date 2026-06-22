@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState } from "react";
+import { api, apiEnabled, setToken } from "./api";
 
 export const DEMO_ACCOUNTS = [
   {
@@ -45,6 +46,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore persisted session on mount
       if (raw) setUser(JSON.parse(raw));
     } catch {
       // ignore
@@ -52,7 +54,32 @@ export function AuthProvider({ children }) {
     setReady(true);
   }, []);
 
-  const login = (email, password) => {
+  const persist = (session) => {
+    setUser(session);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    return { ok: true, user: session };
+  };
+
+  const login = async (email, password) => {
+    // Real backend (JWT) when configured; otherwise the demo fallback.
+    if (apiEnabled) {
+      try {
+        const info = await api.login(email.trim().toLowerCase(), password);
+        return persist({
+          id: info.id,
+          name: info.fullName,
+          email: info.email,
+          role: info.roleName, // "admin" | "guard" | "member"
+          title: info.title,
+          plotNo: info.plotNo,
+          guardId: info.guardId,
+          avatarUrl: info.avatarUrl,
+        });
+      } catch (e) {
+        return { ok: false, error: e.message || "Invalid email or password." };
+      }
+    }
+
     const match = DEMO_ACCOUNTS.find(
       (a) =>
         a.email.toLowerCase() === email.trim().toLowerCase() &&
@@ -61,18 +88,35 @@ export function AuthProvider({ children }) {
     if (!match) return { ok: false, error: "Invalid email or password." };
     const { password: _pw, ...session } = match;
     void _pw;
-    setUser(session);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-    return { ok: true };
+    return persist(session);
   };
 
-  const logout = () => {
+  // Ends the session. Against the real backend this also closes an open guard
+  // shift (recording the logout time + early-clock-out flag); the returned
+  // payload lets the caller react. Local state is always cleared so a backend
+  // hiccup never strands the user in the app.
+  const logout = async () => {
+    let result = {};
+    if (apiEnabled) result = await api.endSession();
+    else setToken(null);
     setUser(null);
     localStorage.removeItem(STORAGE_KEY);
+    return result;
+  };
+
+  // Merge fields into the active session and re-persist (e.g. after the user
+  // edits their own name on the profile page) so the shell updates immediately.
+  const updateUser = (partial) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...partial };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
   };
 
   return (
-    <AuthContext.Provider value={{ user, ready, login, logout }}>
+    <AuthContext.Provider value={{ user, ready, login, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

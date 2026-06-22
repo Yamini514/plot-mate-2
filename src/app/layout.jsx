@@ -1,7 +1,6 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
-import { StoreProvider } from "@/lib/store";
 import { ToastProvider } from "@/components/Toast";
 
 const geistSans = Geist({
@@ -15,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "Plotmate — Green Aero View",
+  title: "Plotmate",
   description:
-    "Plotmate: plot-owners' association management for Green Aero View. Track maintenance dues, treasury, complaints, amenities and community updates.",
+    "Plotmate: plot-owners' association management. Track maintenance dues, treasury, complaints, amenities and community updates.",
 };
 
 export default function RootLayout({ children }) {
@@ -25,9 +24,7 @@ export default function RootLayout({ children }) {
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full">
         <AuthProvider>
-          <ToastProvider>
-            <StoreProvider>{children}</StoreProvider>
-          </ToastProvider>
+          <ToastProvider>{children}</ToastProvider>
         </AuthProvider>
       </body>
     </html>

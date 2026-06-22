@@ -16,45 +16,47 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { tickets, guardTicketTemplates, CATEGORIES, PRIORITIES } from "@/lib/helpdesk-data";
+import { guardTicketTemplates, CATEGORIES, PRIORITIES } from "@/lib/helpdesk-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 
 const catMeta = (v) => CATEGORIES.find((c) => c.value === v) ?? { label: v, icon: "circle-help" };
 
 export default function GuardTickets() {
   const toast = useToast();
-  const [rows, setRows] = useState(() => tickets.filter((t) => t.createdBy.includes("Security")));
+  // Backend returns only this guard's own tickets (they also surface to admin).
+  const { data: raw, reload } = useApi("/guard/tickets", { page_size: 300 });
+  const rows = normalizeList(raw);
   const [open, setOpen] = useState(false);
   const [preset, setPreset] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const start = (tpl) => {
     setPreset(tpl);
     setOpen(true);
   };
 
-  const create = (e) => {
+  const create = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const cat = f.get("category");
-    const newRow = {
-      id: `TKT-${4822 + rows.length}`,
-      subject: f.get("subject") || preset?.label || "Security request",
-      description: f.get("description") || "",
-      category: cat,
-      priority: f.get("priority") || "high",
-      status: "created",
-      location: f.get("location") || "Main Gate",
-      createdBy: "Rajappa Gowda (Security)",
-      assignee: null,
-      created: "Just now",
-      slaRemaining: "On track",
-      slaState: "ok",
-      reopenCount: 0,
-      rating: null,
-    };
-    setRows((rs) => [newRow, ...rs]);
-    setOpen(false);
-    setPreset(null);
-    toast(`${newRow.id} raised to the helpdesk`);
+    setSaving(true);
+    try {
+      const { data } = await api.post("/guard/tickets", {
+        subject: f.get("subject") || preset?.label || "Security request",
+        description: f.get("description") || "",
+        category: f.get("category"),
+        priority: f.get("priority") || "high",
+        location: f.get("location") || "Main Gate",
+      });
+      setOpen(false);
+      setPreset(null);
+      toast(`${data.code} raised to the helpdesk`);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not raise ticket", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -131,7 +133,7 @@ export default function GuardTickets() {
         footer={
           <>
             <Button variant="secondary" onClick={() => { setOpen(false); setPreset(null); }}>Cancel</Button>
-            <Button type="submit" form="guard-ticket" icon="send">Raise ticket</Button>
+            <Button type="submit" form="guard-ticket" icon="send" loading={saving}>Raise ticket</Button>
           </>
         }
       >

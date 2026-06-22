@@ -12,14 +12,43 @@ import {
   inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { amenities, bookings, getMemberOwner } from "@/lib/mock-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+import { useToast } from "@/components/Toast";
 import { formatINR, formatDate } from "@/lib/utils";
 
 export default function MemberAmenitiesPage() {
-  const me = getMemberOwner();
+  const toast = useToast();
+  const { data: rawAmenities } = useApi("/member/amenities");
+  const amenities = normalizeList(rawAmenities);
+  const { data: rawBookings, reload } = useApi("/member/bookings");
+  const list = normalizeList(rawBookings); // this member's own bookings
   const [booking, setBooking] = useState(null);
-  const myBookings = bookings.filter((b) => b.plotNo === me.plotNo);
-  const list = myBookings.length ? myBookings : bookings.slice(0, 2);
+  const [bform, setBform] = useState({ date: "", from: "", to: "" });
+  const [saving, setSaving] = useState(false);
+
+  const requestBooking = async () => {
+    if (!bform.date) {
+      toast("Pick a date", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post("/member/bookings", {
+        amenityId: booking.dbId,
+        date: bform.date,
+        slot: bform.from && bform.to ? `${bform.from} – ${bform.to}` : "Full day",
+      });
+      toast(`Booking requested for ${booking.name}`);
+      setBooking(null);
+      setBform({ date: "", from: "", to: "" });
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not request booking", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="animate-fade-in">
@@ -91,7 +120,7 @@ export default function MemberAmenitiesPage() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setBooking(null)}>Cancel</Button>
-            <Button icon="check" onClick={() => setBooking(null)}>Request booking</Button>
+            <Button icon="check" loading={saving} onClick={requestBooking}>Request booking</Button>
           </>
         }
       >
@@ -104,14 +133,14 @@ export default function MemberAmenitiesPage() {
               </span>
             </div>
             <Field label="Date">
-              <input type="date" className={inputClass} />
+              <input type="date" className={inputClass} value={bform.date} onChange={(e) => setBform({ ...bform, date: e.target.value })} />
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label="From">
-                <input type="time" className={inputClass} />
+                <input type="time" className={inputClass} value={bform.from} onChange={(e) => setBform({ ...bform, from: e.target.value })} />
               </Field>
               <Field label="To">
-                <input type="time" className={inputClass} />
+                <input type="time" className={inputClass} value={bform.to} onChange={(e) => setBform({ ...bform, to: e.target.value })} />
               </Field>
             </div>
             <Field label="Purpose">

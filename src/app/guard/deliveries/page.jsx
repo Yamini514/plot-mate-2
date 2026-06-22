@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   PageHeader,
   Breadcrumbs,
@@ -21,7 +21,9 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { deliveries as seed } from "@/lib/guard-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+import { usePlotVerify, PlotVerifyHint } from "@/components/PlotVerify";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -42,12 +44,42 @@ const courierIcon = {
   Ekart: "truck",
 };
 
+function downloadCSV(filename, rows, columns) {
+  const head = columns.map((c) => `"${c.label}"`).join(",");
+  const body = rows.map((r) => columns.map((c) => `"${String(c.get(r) ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([head + "\n" + body], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function DeliveryTracking() {
   const toast = useToast();
-  const [rows, setRows] = useState(seed);
+  const { data: raw, reload } = useApi("/guard/deliveries", { page_size: 300 });
+  // Map backend field names to the labels this page renders.
+  const rows = normalizeList(raw).map((d) => ({
+    ...d, resident: d.residentName, flat: d.plotNo, received: d.receivedAt, delivered: d.deliveredAt,
+  }));
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  // Log-form fields with live plot verification (same as the visitor gate flow).
+  const [flat, setFlat] = useState("");
+  const [resident, setResident] = useState("");
+  const verify = usePlotVerify(flat, open);
+
+  useEffect(() => {
+    if (verify.status === "found" && verify.owner) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prefill owner from verified plot
+      setResident((r) => r || verify.owner);
+    }
+  }, [verify]);
+
+  const resetForm = () => { setFlat(""); setResident(""); };
+  const closeLog = () => { setOpen(false); resetForm(); };
 
   const counts = useMemo(() => {
     const c = { all: rows.length };
@@ -65,27 +97,47 @@ export default function DeliveryTracking() {
     return matchQ && matchF;
   });
 
-  const handover = (id, resident) => {
-    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, status: "delivered", delivered: "Just now" } : r)));
-    toast(`Package handed over to ${resident}`);
+  const handover = async (d) => {
+    setBusyId(d.id);
+    try {
+      await api.post(`/guard/deliveries/${d.dbId}/handover`);
+      toast(`Package handed over to ${d.resident}`);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not hand over", "error");
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  const logPackage = (e) => {
+  const logPackage = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const newRow = {
-      id: `PKG-${7751 + rows.length}`,
-      courier: f.get("courier") || "Other",
-      agent: f.get("agent") || "—",
-      resident: f.get("resident") || "—",
-      flat: f.get("flat") || "—",
-      received: "Just now",
-      delivered: "—",
-      status: "received",
-    };
-    setRows((rs) => [newRow, ...rs]);
-    setOpen(false);
-    toast(`Package ${newRow.id} logged for ${newRow.resident}`);
+    const courier = (f.get("courier") || "").toString().trim();
+
+    // Validate before submitting so the guard sees a specific message.
+    if (!courier) return toast("Enter the courier or vendor name.", "error");
+    if (!flat.trim()) return toast("Enter the flat / plot number for delivery.", "error");
+    if (!resident.trim()) return toast("Enter the resident the package is for.", "error");
+
+    setSaving(true);
+    try {
+      const { data } = await api.post("/guard/deliveries", {
+        courier,
+        agent: (f.get("agent") || "").toString().trim() || "—",
+        residentName: resident.trim(),
+        plotNo: flat.trim(),
+        status: "received",
+      });
+      setOpen(false);
+      resetForm();
+      toast(`Package ${data.code} logged for ${data.residentName}`);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not log the package. Please try again.", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -96,7 +148,19 @@ export default function DeliveryTracking() {
         subtitle="Track courier and vendor packages received at the gate"
         actions={
           <>
-            <Button variant="secondary" icon="download" onClick={() => toast("Delivery log exported")}>
+            <Button variant="secondary" icon="download" onClick={() => {
+              downloadCSV("deliveries.csv", filtered, [
+                { label: "Package ID", get: (r) => r.id },
+                { label: "Courier", get: (r) => r.courier },
+                { label: "Agent", get: (r) => r.agent },
+                { label: "Resident", get: (r) => r.resident },
+                { label: "Flat / Plot", get: (r) => r.flat },
+                { label: "Received", get: (r) => r.received },
+                { label: "Delivered", get: (r) => r.delivered },
+                { label: "Status", get: (r) => r.status },
+              ]);
+              toast("Delivery log exported");
+            }}>
               Export
             </Button>
             <Button icon="package-plus" onClick={() => setOpen(true)}>
@@ -131,7 +195,7 @@ export default function DeliveryTracking() {
                 <p className="truncate text-sm font-semibold text-slate-800">{d.resident}</p>
                 <p className="truncate text-xs text-slate-400">{d.flat} · {d.courier} · {d.id}</p>
               </div>
-              <Button size="sm" variant="secondary" icon="check" onClick={() => handover(d.id, d.resident)}>
+              <Button size="sm" variant="secondary" icon="check" loading={busyId === d.id} onClick={() => handover(d)}>
                 Handover
               </Button>
             </div>
@@ -190,7 +254,7 @@ export default function DeliveryTracking() {
                   <Td><StatusBadge status={d.status} /></Td>
                   <Td className="text-right">
                     {d.status !== "delivered" ? (
-                      <Button size="sm" variant="secondary" icon="check" onClick={() => handover(d.id, d.resident)}>
+                      <Button size="sm" variant="secondary" icon="check" loading={busyId === d.id} onClick={() => handover(d)}>
                         Handover
                       </Button>
                     ) : (
@@ -207,13 +271,13 @@ export default function DeliveryTracking() {
       {/* Log package modal */}
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeLog}
         title="Log a Package"
         wide
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="log-package" icon="package-plus">Log Package</Button>
+            <Button variant="secondary" onClick={closeLog}>Cancel</Button>
+            <Button type="submit" form="log-package" icon="package-plus" loading={saving}>Log Package</Button>
           </>
         }
       >
@@ -224,11 +288,26 @@ export default function DeliveryTracking() {
           <Field label="Delivery agent (optional)">
             <input name="agent" className={inputClass} placeholder="e.g. Sameer K." />
           </Field>
-          <Field label="Resident">
-            <input name="resident" required className={inputClass} placeholder="e.g. Rohan Gupta" />
-          </Field>
           <Field label="Flat / Plot no.">
-            <input name="flat" required className={inputClass} placeholder="e.g. P-077" />
+            <input
+              name="flat"
+              required
+              value={flat}
+              onChange={(e) => setFlat(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. P-077"
+            />
+            <PlotVerifyHint verify={verify} />
+          </Field>
+          <Field label="Resident">
+            <input
+              name="resident"
+              required
+              value={resident}
+              onChange={(e) => setResident(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. Rohan Gupta"
+            />
           </Field>
           <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 sm:col-span-2">
             <Icon name="info" size={14} />

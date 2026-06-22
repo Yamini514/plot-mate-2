@@ -17,13 +17,16 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import {
-  reports,
-  visitors,
-  deliveries,
-  incidents,
-  shiftRoster,
-} from "@/lib/guard-data";
+import { normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+
+// Available report definitions. Row counts are filled from live data in-component.
+const reports = [
+  { id: "RPT-1", name: "Daily Visitor Report", desc: "Every visitor entry, approval and check-out for the selected day.", icon: "users-round", range: "Today", tone: "brand" },
+  { id: "RPT-2", name: "Delivery Report", desc: "Courier packages received, held and handed over to residents.", icon: "package", range: "Today", tone: "sky" },
+  { id: "RPT-3", name: "Incident Report", desc: "Security incidents logged with severity, location and resolution status.", icon: "shield-alert", range: "Last 7 days", tone: "amber" },
+  { id: "RPT-4", name: "Guard Activity Report", desc: "Shift attendance, patrol logs and gate actions per guard.", icon: "clipboard-check", range: "This month", tone: "violet" },
+];
 
 const toneMap = {
   brand: "bg-brand-50 text-brand-600",
@@ -38,55 +41,27 @@ const RANGES = [
   { value: "month", label: "This month" },
 ];
 
-// Each report maps to a column definition + the underlying rows.
-const DATASETS = {
-  "RPT-1": {
-    columns: [
-      { key: "id", label: "ID" },
-      { key: "name", label: "Visitor" },
-      { key: "phone", label: "Phone" },
-      { key: "resident", label: "Resident" },
-      { key: "flat", label: "Flat" },
-      { key: "purpose", label: "Purpose" },
-      { key: "checkIn", label: "Check-in" },
-      { key: "status", label: "Status" },
-    ],
-    rows: visitors,
-  },
-  "RPT-2": {
-    columns: [
-      { key: "id", label: "Package ID" },
-      { key: "courier", label: "Courier" },
-      { key: "agent", label: "Agent" },
-      { key: "resident", label: "Resident" },
-      { key: "flat", label: "Flat" },
-      { key: "received", label: "Received" },
-      { key: "delivered", label: "Delivered" },
-      { key: "status", label: "Status" },
-    ],
-    rows: deliveries,
-  },
-  "RPT-3": {
-    columns: [
-      { key: "id", label: "ID" },
-      { key: "type", label: "Type" },
-      { key: "location", label: "Location" },
-      { key: "severity", label: "Severity" },
-      { key: "reportedBy", label: "Reported by" },
-      { key: "time", label: "Time" },
-      { key: "status", label: "Status" },
-    ],
-    rows: incidents,
-  },
-  "RPT-4": {
-    columns: [
-      { key: "shift", label: "Shift" },
-      { key: "time", label: "Timing" },
-      { key: "guard", label: "Guard" },
-      { key: "gate", label: "Gate" },
-    ],
-    rows: shiftRoster,
-  },
+// Column definitions per report (rows are filled from live data in-component).
+const COLUMNS = {
+  "RPT-1": [
+    { key: "id", label: "ID" }, { key: "name", label: "Visitor" }, { key: "phone", label: "Phone" },
+    { key: "resident", label: "Resident" }, { key: "flat", label: "Flat" },
+    { key: "purpose", label: "Purpose" }, { key: "checkIn", label: "Check-in" }, { key: "status", label: "Status" },
+  ],
+  "RPT-2": [
+    { key: "id", label: "Package ID" }, { key: "courier", label: "Courier" }, { key: "agent", label: "Agent" },
+    { key: "resident", label: "Resident" }, { key: "flat", label: "Flat" },
+    { key: "received", label: "Received" }, { key: "delivered", label: "Delivered" }, { key: "status", label: "Status" },
+  ],
+  "RPT-3": [
+    { key: "id", label: "ID" }, { key: "type", label: "Type" }, { key: "location", label: "Location" },
+    { key: "severity", label: "Severity" }, { key: "reportedBy", label: "Reported by" },
+    { key: "time", label: "Time" }, { key: "status", label: "Status" },
+  ],
+  "RPT-4": [
+    { key: "shift", label: "Shift" }, { key: "time", label: "Timing" },
+    { key: "guard", label: "Guard" }, { key: "gate", label: "Gate" },
+  ],
 };
 
 const cell = (v) => String(v ?? "").replace(/_/g, " ");
@@ -141,6 +116,18 @@ function printPDF(report, ds) {
 
 export default function Reports() {
   const toast = useToast();
+  const { data: rv } = useApi("/guard/visitors", { page_size: 300 });
+  const { data: rd } = useApi("/guard/deliveries", { page_size: 300 });
+  const { data: ri } = useApi("/guard/incidents", { page_size: 300 });
+
+  // Live rows mapped to each report's column keys.
+  const DATASETS = {
+    "RPT-1": { columns: COLUMNS["RPT-1"], rows: normalizeList(rv).map((v) => ({ id: v.code, name: v.name, phone: v.phone, resident: v.residentName, flat: v.plotNo, purpose: v.purpose, checkIn: v.checkIn, status: v.status })) },
+    "RPT-2": { columns: COLUMNS["RPT-2"], rows: normalizeList(rd).map((d) => ({ id: d.code, courier: d.courier, agent: d.agent, resident: d.residentName, flat: d.plotNo, received: d.receivedAt, delivered: d.deliveredAt, status: d.status })) },
+    "RPT-3": { columns: COLUMNS["RPT-3"], rows: normalizeList(ri).map((i) => ({ id: i.code, type: i.type, location: i.location, severity: i.severity, reportedBy: i.reportedBy, time: i.occurredAt, status: i.status })) },
+    "RPT-4": { columns: COLUMNS["RPT-4"], rows: [] },
+  };
+
   const [range, setRange] = useState("today");
   const [preview, setPreview] = useState(null); // { report, ds }
 

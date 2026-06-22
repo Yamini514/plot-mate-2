@@ -20,7 +20,9 @@ import {
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { incidents as seed, incidentTypes } from "@/lib/guard-data";
+import { incidentTypes } from "@/lib/guard-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -32,12 +34,23 @@ const FILTERS = [
 
 const SEVERITIES = ["low", "medium", "high", "critical"];
 
+function downloadCSV(filename, rows, columns) {
+  const head = columns.map((c) => `"${c.label}"`).join(",");
+  const body = rows.map((r) => columns.map((c) => `"${String(c.get(r) ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([head + "\n" + body], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function IncidentReporting() {
   const toast = useToast();
-  const [rows, setRows] = useState(seed);
+  const { data: raw, reload } = useApi("/guard/incidents", { page_size: 300 });
+  const rows = normalizeList(raw).map((i) => ({ ...i, time: i.occurredAt }));
   const [filter, setFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [severity, setSeverity] = useState("medium");
+  const [saving, setSaving] = useState(false);
 
   // Open the log-incident modal automatically when linked from a quick action.
   useEffect(() => {
@@ -53,24 +66,38 @@ export default function IncidentReporting() {
   }, [rows]);
 
   const openCount = rows.filter((r) => ["open", "investigating", "escalated"].includes(r.status)).length;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const loggedToday = rows.filter((r) => (r.occurredAt || r.createdAt || "").slice(0, 10) === todayStr).length;
   const filtered = filter === "all" ? rows : rows.filter((r) => r.status === filter);
 
-  const log = (e) => {
+  const log = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const newRow = {
-      id: `INC-${3093 + rows.length}`,
-      type: f.get("type") || "Other",
-      location: f.get("location") || "—",
-      severity,
-      reportedBy: "Rajappa Gowda",
-      time: "Today · Just now",
-      status: "open",
-    };
-    setRows((rs) => [newRow, ...rs]);
-    setOpen(false);
-    setSeverity("medium");
-    toast(`Incident ${newRow.id} logged`);
+    const location = (f.get("location") || "").toString().trim();
+    const description = (f.get("description") || "").toString().trim();
+
+    // Validate before submitting so the guard gets a clear, specific message.
+    if (!location) return toast("Enter where the incident happened.", "error");
+    if (description.length < 10)
+      return toast("Add a short description (at least 10 characters) of what happened.", "error");
+
+    setSaving(true);
+    try {
+      const { data } = await api.post("/guard/incidents", {
+        incidentType: f.get("type") || "Other",
+        location,
+        description,
+        severity,
+      });
+      setOpen(false);
+      setSeverity("medium");
+      toast(`Incident ${data.code} logged`);
+      reload();
+    } catch (err) {
+      toast(err.message || "Could not log the incident. Please try again.", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -81,7 +108,18 @@ export default function IncidentReporting() {
         subtitle="Log and track security incidents at the community"
         actions={
           <>
-            <Button variant="secondary" icon="download" onClick={() => toast("Incident report exported")}>
+            <Button variant="secondary" icon="download" onClick={() => {
+              downloadCSV("incidents.csv", filtered, [
+                { label: "Incident ID", get: (r) => r.id },
+                { label: "Type", get: (r) => r.type },
+                { label: "Location", get: (r) => r.location },
+                { label: "Severity", get: (r) => r.severity },
+                { label: "Reported by", get: (r) => r.reportedBy },
+                { label: "Time", get: (r) => r.time },
+                { label: "Status", get: (r) => r.status },
+              ]);
+              toast("Incident report exported");
+            }}>
               Export
             </Button>
             <Button icon="shield-alert" onClick={() => setOpen(true)}>
@@ -93,7 +131,7 @@ export default function IncidentReporting() {
 
       <div className="mb-4 grid grid-cols-2 gap-4 xl:grid-cols-4">
         <StatCard label="Open incidents" value={openCount} icon="shield-alert" tone="rose" />
-        <StatCard label="Logged today" value={rows.filter((r) => r.time.startsWith("Today")).length} icon="file-plus" tone="amber" />
+        <StatCard label="Logged today" value={loggedToday} icon="file-plus" tone="amber" />
         <StatCard label="Critical / High" value={rows.filter((r) => r.severity === "critical" || r.severity === "high").length} icon="siren" tone="rose" />
         <StatCard label="Resolved" value={counts.resolved ?? 0} icon="circle-check-big" tone="brand" />
       </div>
@@ -150,7 +188,7 @@ export default function IncidentReporting() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" form="log-incident" variant="danger" icon="shield-alert">Submit Report</Button>
+            <Button type="submit" form="log-incident" variant="danger" icon="shield-alert" loading={saving}>Submit Report</Button>
           </>
         }
       >

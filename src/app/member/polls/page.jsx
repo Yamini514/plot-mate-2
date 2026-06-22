@@ -3,12 +3,29 @@
 import { useState } from "react";
 import { PageHeader, Card, CardHeader, Badge, Progress } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { polls } from "@/lib/mock-data";
+import { api, normalizeList } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
+import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 export default function MemberPollsPage() {
-  const [votes, setVotes] = useState({});
+  const { data: raw, reload } = useApi("/member/polls");
+  const polls = normalizeList(raw);
+  const toast = useToast();
+  const [busyId, setBusyId] = useState(null);
+
+  const vote = async (poll, optionId) => {
+    setBusyId(optionId);
+    try {
+      await api.post(`/member/polls/${poll.dbId}/vote`, { optionId });
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not record vote", "error");
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <div className="animate-fade-in">
@@ -16,9 +33,8 @@ export default function MemberPollsPage() {
 
       <div className="space-y-4">
         {polls.map((p) => {
-          const myVote = votes[p.id];
-          const voted = !!myVote;
-          const total = p.options.reduce((s, o) => s + o.votes, 0) + (voted ? 1 : 0);
+          const voted = !!p.voted;
+          const total = p.options.reduce((s, o) => s + o.votes, 0);
           return (
             <Card key={p.id}>
               <CardHeader
@@ -30,17 +46,22 @@ export default function MemberPollsPage() {
               <div className="space-y-3 p-5">
                 <p className="text-sm text-slate-500">{p.description}</p>
                 {p.options.map((o) => {
-                  const count = o.votes + (myVote === o.id ? 1 : 0);
+                  const count = o.votes;
                   const pct = total ? Math.round((count / total) * 100) : 0;
-                  const mine = myVote === o.id;
-                  if (!voted) {
+                  const mine = false;
+                  if (!voted && p.status === "active") {
                     return (
                       <button
                         key={o.id}
-                        onClick={() => setVotes((v) => ({ ...v, [p.id]: o.id }))}
-                        className="flex w-full items-center gap-3 rounded-lg border border-slate-200 px-4 py-3 text-left text-sm font-medium text-slate-700 transition-colors hover:border-brand-300 hover:bg-brand-50/40"
+                        onClick={() => vote(p, o.id)}
+                        disabled={busyId === o.id}
+                        className="flex w-full items-center gap-3 rounded-lg border border-slate-200 px-4 py-3 text-left text-sm font-medium text-slate-700 transition-colors hover:border-brand-300 hover:bg-brand-50/40 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <span className="grid h-5 w-5 place-items-center rounded-full border-2 border-slate-300" />
+                        {busyId === o.id ? (
+                          <Icon name="loader-circle" size={20} className="animate-spin text-brand-500" />
+                        ) : (
+                          <span className="grid h-5 w-5 place-items-center rounded-full border-2 border-slate-300" />
+                        )}
                         {o.label}
                       </button>
                     );

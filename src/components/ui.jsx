@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { Icon } from "./Icon";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /* ---------------- Card ---------------- */
 export function Card({ className, children }) {
@@ -118,6 +118,10 @@ export function StatusBadge({ status }) {
     inside: { tone: "sky", label: "Inside" },
     left: { tone: "slate", label: "Left" },
     expected: { tone: "amber", label: "Expected" },
+    arrived: { tone: "sky", label: "Arrived" },
+    paused: { tone: "slate", label: "Paused" },
+    denied: { tone: "rose", label: "Denied" },
+    expired: { tone: "slate", label: "Expired" },
     sent: { tone: "sky", label: "Sent" },
     scheduled: { tone: "amber", label: "Scheduled" },
     responded: { tone: "green", label: "Responded" },
@@ -168,13 +172,15 @@ export function Button({
   variant = "primary",
   size = "md",
   icon,
+  loading = false,
+  disabled,
   className,
   children,
   ...props
 }) {
   const variants = {
     primary:
-      "bg-brand-600 text-white hover:bg-brand-700 shadow-sm disabled:opacity-50",
+      "bg-brand-600 text-white hover:bg-brand-700 shadow-sm",
     secondary:
       "bg-white text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50",
     ghost: "text-slate-600 hover:bg-slate-100",
@@ -184,17 +190,24 @@ export function Button({
     sm: "h-8 px-3 text-xs gap-1.5",
     md: "h-10 px-4 text-sm gap-2",
   };
+  const iconSize = size === "sm" ? 14 : 16;
   return (
     <button
+      disabled={disabled || loading}
       className={cn(
         "inline-flex items-center justify-center rounded-lg font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400",
+        "disabled:cursor-not-allowed disabled:opacity-50",
         variants[variant],
         sizes[size],
         className,
       )}
       {...props}
     >
-      {icon && <Icon name={icon} size={size === "sm" ? 14 : 16} />}
+      {loading ? (
+        <Icon name="loader-circle" size={iconSize} className="animate-spin" />
+      ) : (
+        icon && <Icon name={icon} size={iconSize} />
+      )}
       {children}
     </button>
   );
@@ -335,8 +348,8 @@ export function EmptyState({ icon = "inbox", title, subtitle }) {
 }
 
 /* ---------------- Avatar ---------------- */
-export function Avatar({ name, size = 36, className }) {
-  const init = name
+export function Avatar({ name, src, size = 36, className }) {
+  const init = (name ?? "")
     .split(" ")
     .map((p) => p[0])
     .slice(0, 2)
@@ -345,12 +358,17 @@ export function Avatar({ name, size = 36, className }) {
   return (
     <span
       className={cn(
-        "grid shrink-0 place-items-center rounded-full bg-brand-100 font-semibold text-brand-700",
+        "grid shrink-0 place-items-center overflow-hidden rounded-full bg-brand-100 font-semibold text-brand-700",
         className,
       )}
       style={{ width: size, height: size, fontSize: size * 0.36 }}
     >
-      {init}
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt={name || "avatar"} className="h-full w-full object-cover" />
+      ) : (
+        init
+      )}
     </span>
   );
 }
@@ -390,6 +408,40 @@ export function Modal({ open, onClose, title, children, footer, wide }) {
         )}
       </div>
     </div>
+  );
+}
+
+/* ---------------- ConfirmDialog ---------------- */
+export function ConfirmDialog({
+  open,
+  onClose,
+  onConfirm,
+  title = "Are you sure?",
+  message,
+  confirmLabel = "Delete",
+  confirmVariant = "danger",
+  loading = false,
+}) {
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={title}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={loading}>
+            Cancel
+          </Button>
+          <Button variant={confirmVariant} loading={loading} onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm leading-relaxed text-slate-600">
+        {message ?? "This action cannot be undone."}
+      </p>
+    </Modal>
   );
 }
 
@@ -463,6 +515,34 @@ export function Field({ label, children, hint }) {
 
 export const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100";
+
+/* ---------------- PasswordInput (with show/hide eye) ---------------- */
+export function PasswordInput({ value, onChange, placeholder, className, autoComplete = "new-password", ...props }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className={cn(inputClass, "pr-10", className)}
+        {...props}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setShow((s) => !s)}
+        aria-label={show ? "Hide password" : "Show password"}
+        title={show ? "Hide password" : "Show password"}
+        className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-400 transition-colors hover:text-slate-600"
+      >
+        <Icon name={show ? "eye-off" : "eye"} size={16} />
+      </button>
+    </div>
+  );
+}
 
 /* ---------------- SegmentedControl ---------------- */
 export function Segmented({ options, value, onChange }) {
