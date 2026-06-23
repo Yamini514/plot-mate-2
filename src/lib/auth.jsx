@@ -5,6 +5,13 @@ import { api, apiEnabled, setToken } from "./api";
 
 export const DEMO_ACCOUNTS = [
   {
+    name: "Platform Super Admin",
+    email: "super@plotmate.app",
+    password: "super123",
+    role: "super_admin",
+    title: "Platform Super Admin",
+  },
+  {
     name: "Suresh Kumar",
     email: "admin@greenaeroview.in",
     password: "admin123",
@@ -31,6 +38,7 @@ export const DEMO_ACCOUNTS = [
 
 /** Landing route for a given role. */
 export function homePath(role) {
+  if (role === "super_admin") return "/super-admin";
   if (role === "admin") return "/admin";
   if (role === "guard") return "/guard";
   return "/member";

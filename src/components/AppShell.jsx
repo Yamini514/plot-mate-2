@@ -28,6 +28,86 @@ const RECORD_SEARCH = {
   },
 };
 
+// Sidebar nav with a single active "pill" that glides to the selected item.
+// We measure the active link's box and animate an absolutely-positioned
+// highlight to it; on first mount the pill snaps into place (no slide).
+function SidebarNav({ groups, pathname, badges }) {
+  const navRef = useRef(null);
+  const firstRun = useRef(true);
+  const [pill, setPill] = useState(null);
+
+  // Exactly one item is active: the one whose href is the longest match for the
+  // current path (exact, or a path prefix on a "/" boundary). This avoids the
+  // dashboard/home item matching every sub-route.
+  const activeHref = Object.values(groups)
+    .flat()
+    .filter((it) => pathname === it.href || pathname.startsWith(`${it.href}/`))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+
+  useEffect(() => {
+    const el = navRef.current?.querySelector('[data-active="true"]');
+    if (!el) {
+      setPill(null);
+      return;
+    }
+    setPill({ top: el.offsetTop, height: el.offsetHeight, animate: !firstRun.current });
+    firstRun.current = false;
+    // Re-measure when the active route changes (DOM reflects the new active item).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  return (
+    <nav ref={navRef} className="relative flex-1 space-y-5 overflow-y-auto px-3 pb-4">
+      {pill && (
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute left-3 right-3 z-0 rounded-lg bg-brand-50",
+            pill.animate && "transition-all duration-300 ease-out",
+          )}
+          style={{ top: pill.top, height: pill.height }}
+        />
+      )}
+      {Object.entries(groups).map(([group, items]) => (
+        <div key={group}>
+          <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            {group}
+          </p>
+          <div className="space-y-0.5">
+            {items.map((item) => {
+              const active = item.href === activeHref;
+              const badge = badges[item.href];
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  data-active={active ? "true" : undefined}
+                  className={cn(
+                    "group relative z-10 flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    active ? "text-brand-700" : "text-slate-600 hover:bg-slate-100",
+                  )}
+                >
+                  <Icon
+                    name={item.icon}
+                    size={18}
+                    className={active ? "text-brand-600" : "text-slate-400 group-hover:text-slate-600"}
+                  />
+                  <span className="flex-1 truncate">{item.label}</span>
+                  {badge > 0 && (
+                    <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                      {badge}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
 export function AppShell({ nav, role, children }) {
   const { user, ready, logout } = useAuth();
   const { settings } = useSettings();
@@ -72,7 +152,13 @@ export function AppShell({ nav, role, children }) {
         detail: `${count} ${NOTIF_COPY[href] ?? "items need attention"}`,
       };
     });
-  const helpHref = role === "guard" ? "/guard/tickets" : `/${role}/helpdesk`;
+  // The platform super admin has no helpdesk/announcements; other personas link
+  // to their own. (null = don't show the Help desk shortcut.)
+  const helpHref =
+    role === "guard" ? "/guard/tickets"
+    : role === "super_admin" ? null
+    : `/${role}/helpdesk`;
+  const hasAnnouncements = role === "admin" || role === "member";
 
   // --- Global search ---------------------------------------------------------
   const [q, setQ] = useState("");
@@ -173,47 +259,7 @@ export function AppShell({ nav, role, children }) {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 space-y-5 overflow-y-auto px-3 pb-4">
-        {Object.entries(groups).map(([group, items]) => (
-          <div key={group}>
-            <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              {group}
-            </p>
-            <div className="space-y-0.5">
-              {items.map((item) => {
-                const active =
-                  pathname === item.href ||
-                  (item.href !== `/${role}` && pathname.startsWith(item.href));
-                const badge = badges[item.href];
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                      active
-                        ? "bg-brand-50 text-brand-700"
-                        : "text-slate-600 hover:bg-slate-100",
-                    )}
-                  >
-                    <Icon
-                      name={item.icon}
-                      size={18}
-                      className={active ? "text-brand-600" : "text-slate-400 group-hover:text-slate-600"}
-                    />
-                    <span className="flex-1 truncate">{item.label}</span>
-                    {badge > 0 && (
-                      <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                        {badge}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </nav>
+      <SidebarNav groups={groups} pathname={pathname} badges={badges} />
 
       {/* User card */}
       <div className="border-t border-slate-100 p-3">
@@ -400,17 +446,19 @@ export function AppShell({ nav, role, children }) {
               {helpOpen && (
                 <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
                   <p className="px-4 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">Help &amp; support</p>
-                  <button
-                    onClick={() => go(helpHref)}
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50"
-                  >
-                    <Icon name="life-buoy" size={16} className="text-slate-400" />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium text-slate-700">Help desk</span>
-                      <span className="block text-xs text-slate-400">Raise or track a request</span>
-                    </span>
-                  </button>
-                  {role !== "guard" && (
+                  {helpHref && (
+                    <button
+                      onClick={() => go(helpHref)}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50"
+                    >
+                      <Icon name="life-buoy" size={16} className="text-slate-400" />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-slate-700">Help desk</span>
+                        <span className="block text-xs text-slate-400">Raise or track a request</span>
+                      </span>
+                    </button>
+                  )}
+                  {hasAnnouncements && (
                     <button
                       onClick={() => go(`/${role}/announcements`)}
                       className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50"
