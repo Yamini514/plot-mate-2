@@ -56,7 +56,24 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path, { body, query } = {}) {
+// De-duplicate concurrent identical GETs. React StrictMode (dev) mounts effects
+// twice, and multiple widgets may request the same endpoint at once; sharing one
+// in-flight promise per (path + query) collapses those into a single network
+// call. Non-GETs are never shared, and each entry clears as soon as it settles
+// (so this is request de-duplication, not a response cache — no stale data).
+const inflightGets = new Map();
+
+function request(method, path, opts = {}) {
+  if (method !== "GET") return performRequest(method, path, opts);
+  const key = `${path}?${JSON.stringify(opts.query ?? {})}`;
+  const hit = inflightGets.get(key);
+  if (hit) return hit;
+  const p = performRequest("GET", path, opts).finally(() => inflightGets.delete(key));
+  inflightGets.set(key, p);
+  return p;
+}
+
+async function performRequest(method, path, { body, query } = {}) {
   const url = new URL(API_BASE + path);
   if (query) {
     for (const [k, v] of Object.entries(query)) {

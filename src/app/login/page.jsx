@@ -227,6 +227,18 @@ export default function LoginPage() {
                 );
               })}
             </div>
+            {/* Platform layer — sits above all ventures. */}
+            <button
+              type="button"
+              onClick={() => fill("super_admin")}
+              className="mt-2 flex w-full items-center gap-2 rounded-lg border border-brand-200 bg-brand-50/50 p-3 text-left transition-colors hover:border-brand-300 hover:bg-brand-50"
+            >
+              <Icon name="building-2" size={15} className="text-brand-600" />
+              <span className="text-xs font-semibold text-slate-700">Platform Super Admin</span>
+              <span className="ml-auto truncate font-mono text-[11px] text-slate-400">
+                {DEMO_ACCOUNTS.find((x) => x.role === "super_admin")?.email}
+              </span>
+            </button>
           </div>
         </div>
       </div>

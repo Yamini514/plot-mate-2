@@ -3,7 +3,6 @@
 export const adminNav = [
   { label: "Dashboard", href: "/admin", icon: "layout-dashboard", group: "Overview" },
   { label: "Plot Map", href: "/admin/plot-map", icon: "map", group: "Overview" },
-  { label: "Plot Grid", href: "/admin/plots", icon: "grid-2x2", group: "Overview" },
   { label: "Plot Owners", href: "/admin/owners", icon: "users", group: "Community" },
   { label: "Treasury", href: "/admin/treasury", icon: "wallet", group: "Finance" },
   { label: "Reminders", href: "/admin/reminders", icon: "bell-ring", group: "Finance" },
@@ -24,6 +23,13 @@ export const adminNav = [
   { label: "Announcements", href: "/admin/announcements", icon: "megaphone", group: "Operations" },
   { label: "Documents", href: "/admin/documents", icon: "folder", group: "Operations" },
   { label: "Settings", href: "/admin/settings", icon: "settings", group: "System" },
+];
+
+// Platform layer — the super admin sits above all ventures.
+export const superAdminNav = [
+  { label: "Dashboard", href: "/super-admin", icon: "layout-dashboard", group: "Platform" },
+  { label: "Onboarding Requests", href: "/super-admin/onboarding", icon: "clipboard-check", group: "Platform" },
+  { label: "Ventures", href: "/super-admin/ventures", icon: "building-2", group: "Platform" },
 ];
 
 export const guardNav = [
