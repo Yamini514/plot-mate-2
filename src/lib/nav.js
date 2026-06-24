@@ -4,6 +4,7 @@ export const adminNav = [
   { label: "Dashboard", href: "/admin", icon: "layout-dashboard", group: "Overview" },
   { label: "Plot Map", href: "/admin/plot-map", icon: "map", group: "Overview" },
   { label: "Plot Owners", href: "/admin/owners", icon: "users", group: "Community" },
+  { label: "Invites", href: "/admin/invites", icon: "user-plus", group: "Community" },
   { label: "Treasury", href: "/admin/treasury", icon: "wallet", group: "Finance" },
   { label: "Reminders", href: "/admin/reminders", icon: "bell-ring", group: "Finance" },
   { label: "Reports", href: "/admin/reports", icon: "bar-chart-3", group: "Finance" },
