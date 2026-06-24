@@ -28,8 +28,14 @@ export const adminNav = [
 // Platform layer — the super admin sits above all ventures.
 export const superAdminNav = [
   { label: "Dashboard", href: "/super-admin", icon: "layout-dashboard", group: "Platform" },
-  { label: "Onboarding Requests", href: "/super-admin/onboarding", icon: "clipboard-check", group: "Platform" },
-  { label: "Ventures", href: "/super-admin/ventures", icon: "building-2", group: "Platform" },
+  { label: "Venture Requests", href: "/super-admin/onboarding", icon: "clipboard-check", group: "Ventures" },
+  { label: "Ventures", href: "/super-admin/ventures", icon: "building-2", group: "Ventures" },
+  { label: "Venture Admins", href: "/super-admin/venture-admins", icon: "user-cog", group: "People" },
+  { label: "Users", href: "/super-admin/users", icon: "users", group: "People" },
+  { label: "Support Tickets", href: "/super-admin/tickets", icon: "life-buoy", group: "Support" },
+  { label: "Audit Logs", href: "/super-admin/audit", icon: "scroll-text", group: "System" },
+  { label: "Reports", href: "/super-admin/reports", icon: "bar-chart-3", group: "Insights" },
+  { label: "Settings", href: "/super-admin/settings", icon: "settings", group: "System" },
 ];
 
 export const guardNav = [

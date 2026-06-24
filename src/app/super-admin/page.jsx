@@ -15,7 +15,14 @@ const STATS = [
   { key: "pendingRequests", label: "Pending requests", icon: "clipboard-check", tone: "amber" },
   { key: "totalUsers", label: "Total users", icon: "users", tone: "violet" },
   { key: "totalPlots", label: "Total plots", icon: "map-pinned", tone: "slate" },
+  { key: "openTickets", label: "Open tickets", icon: "life-buoy", tone: "amber" },
 ];
+
+// Colour critical audit actions in the activity feed.
+const AUDIT_TONE = (a) =>
+  a?.includes("suspend") || a?.includes("block") || a?.includes("reject") ? "rose"
+  : a?.includes("approve") || a?.includes("activate") ? "green"
+  : a?.includes("support") ? "amber" : "slate";
 
 function StatSkeleton() {
   return (
@@ -31,6 +38,7 @@ export default function SuperAdminDashboard() {
   const { data, loading } = useApi("/super/overview");
   const ready = !loading && !!data;
   const recent = Array.isArray(data?.recentRequests) ? data.recentRequests : [];
+  const audits = Array.isArray(data?.recentAudits) ? data.recentAudits : [];
 
   return (
     <div className="animate-fade-in">
@@ -47,7 +55,8 @@ export default function SuperAdminDashboard() {
           : STATS.map((s) => <StatSkeleton key={s.key} />)}
       </div>
 
-      <Card className="mt-6">
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <Card>
         <div className="flex items-center justify-between border-b border-slate-100 p-4">
           <h2 className="text-sm font-semibold text-slate-800">Recent onboarding requests</h2>
           <Link href="/super-admin/onboarding" className="text-xs font-medium text-brand-700 hover:underline">
@@ -91,6 +100,48 @@ export default function SuperAdminDashboard() {
           </ul>
         )}
       </Card>
+
+      <Card>
+        <div className="flex items-center justify-between border-b border-slate-100 p-4">
+          <h2 className="text-sm font-semibold text-slate-800">Recent platform activity</h2>
+          <Link href="/super-admin/audit" className="text-xs font-medium text-brand-700 hover:underline">
+            View all
+          </Link>
+        </div>
+        {!ready ? (
+          <ul className="divide-y divide-slate-100">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="flex items-center gap-3 px-4 py-3">
+                <span className="h-9 w-9 shrink-0 animate-pulse rounded-lg bg-slate-100" />
+                <div className="flex-1 space-y-2">
+                  <span className="block h-3.5 w-48 animate-pulse rounded bg-slate-200" />
+                  <span className="block h-3 w-24 animate-pulse rounded bg-slate-100" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : audits.length === 0 ? (
+          <div className="px-4 py-10 text-center text-sm text-slate-400">
+            <Icon name="scroll-text" size={22} className="mx-auto text-slate-300" />
+            <p className="mt-2">No platform activity yet.</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {audits.map((a) => (
+              <li key={a.id} className="flex items-center gap-3 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-slate-700">{a.summary || a.action}</p>
+                  <p className="truncate text-xs text-slate-400">
+                    {a.actorName || "system"} · {formatDate(a.createdAt)}
+                  </p>
+                </div>
+                <Badge tone={AUDIT_TONE(a.action)}>{a.action}</Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+      </div>
     </div>
   );
 }
