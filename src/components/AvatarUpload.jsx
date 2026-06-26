@@ -3,34 +3,7 @@
 import { useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
-import { api } from "@/lib/api";
-
-// Downscale an image file to a small square-ish JPEG data URL. Keeps stored
-// photos tiny (tens of KB) whether they end up inline in the DB or on S3 —
-// important at community scale, where thousands of full-res photos would bloat
-// rows and slow every list fetch.
-function downscaleToDataURL(file, max = 256, quality = 0.82) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("read failed"));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error("decode failed"));
-      img.onload = () => {
-        const scale = Math.min(1, max / Math.max(img.width, img.height));
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
+import { uploadImage } from "@/lib/upload";
 
 /**
  * Circular photo picker. `value` is the current URL (data: or https:), `onChange`
@@ -51,23 +24,8 @@ export function AvatarUpload({ value, onChange, name = "", size = 80, label = "P
     }
     setBusy(true);
     try {
-      const dataUrl = await downscaleToDataURL(file);
-      let finalUrl = dataUrl; // inline fallback (works with no storage infra)
-      try {
-        const { data } = await api.post("/admin/uploads/presign", { contentType: "image/jpeg" });
-        if (data?.configured && data.uploadUrl) {
-          const blob = await (await fetch(dataUrl)).blob();
-          const put = await fetch(data.uploadUrl, {
-            method: "PUT",
-            headers: { "Content-Type": "image/jpeg" },
-            body: blob,
-          });
-          if (put.ok) finalUrl = data.publicUrl;
-        }
-      } catch {
-        /* presign/S3 unavailable — keep the inline data URL */
-      }
-      onChange(finalUrl);
+      // Avatars stay tiny — cap the longest edge at 256px.
+      onChange(await uploadImage(file, { max: 256, quality: 0.82 }));
     } catch {
       toast("Couldn't process that image", "error");
     } finally {

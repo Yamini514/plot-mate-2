@@ -61,6 +61,33 @@ export function CollectionTrendChart({ data }) {
   );
 }
 
+// Count-based multi-series area chart (no currency formatting). `data` is keyed
+// by `month`; `series` is [{ key, name, color }].
+export function CountAreaChart({ data, series, height = 260 }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{ top: 10, right: 8, left: -18, bottom: 0 }}>
+        <defs>
+          {series.map((s) => (
+            <linearGradient key={s.key} id={`ca-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={s.color} stopOpacity={0.32} />
+              <stop offset="100%" stopColor={s.color} stopOpacity={0} />
+            </linearGradient>
+          ))}
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+        <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <Tooltip {...tooltipStyle} />
+        <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+        {series.map((s) => (
+          <Area key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill={`url(#ca-${s.key})`} />
+        ))}
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
 export function DonutChart({ data, height = 240 }) {
   return (
     <ResponsiveContainer width="100%" height={height}>

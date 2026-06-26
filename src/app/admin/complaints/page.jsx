@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   PageHeader,
   Card,
@@ -27,6 +27,14 @@ import { useToast } from "@/components/Toast";
 import { useAuth } from "@/lib/auth";
 import { useSettings } from "@/lib/useSettings";
 import { formatDate } from "@/lib/utils";
+import { uploadDocument, formatBytes } from "@/lib/upload";
+
+const ESC_LABEL = { l1: "L1", l2: "L2", l3: "L3" };
+const EVENT_ICON = {
+  note: "message-square", status: "refresh-cw", assignment: "user-check",
+  escalation: "trending-up", confirmation: "circle-check-big", reopen: "rotate-ccw",
+  attachment: "paperclip",
+};
 
 function downloadCSV(filename, rows, columns) {
   const head = columns.map((c) => `"${c.label}"`).join(",");
@@ -59,6 +67,67 @@ export default function ComplaintsPage() {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [assignFor, setAssignFor] = useState(null); // complaint being (re)assigned
+  const [note, setNote] = useState("");
+  const [internal, setInternal] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const fileRef = useRef(null);
+
+  // Full detail (timeline + attachments) for the open complaint.
+  const { data: detail, reload: reloadDetail } = useApi(
+    selected ? `/admin/complaints/${selected.dbId}` : null,
+  );
+  const events = Array.isArray(detail?.events) ? detail.events : [];
+  const attachments = Array.isArray(detail?.attachments) ? detail.attachments : [];
+  const escLevel = detail?.escalationLevel;
+
+  const refresh = () => { reload(); reloadDetail(); };
+
+  const act = async (action, body, label) => {
+    if (!selected) return;
+    setBusyAction(action);
+    try {
+      await api.post(`/admin/complaints/${selected.dbId}/${action}`, body || {});
+      if (label) toast(label);
+      refresh();
+    } catch (e) {
+      toast(e.message || "Action failed", "error");
+    } finally { setBusyAction(null); }
+  };
+
+  const addNote = async () => {
+    if (!note.trim()) { toast("Add a note", "error"); return; }
+    await act("note", { body: note.trim(), internal }, "Note added");
+    setNote("");
+  };
+
+  const escalate = () => act("escalate", {}, "Escalated");
+
+  const doReopen = async () => {
+    if (reopenReason.trim().length < 3) { toast("Add a reason (min 3 chars)", "error"); return; }
+    await act("reopen", { reason: reopenReason.trim() }, "Reopened");
+    setReopenOpen(false);
+    setReopenReason("");
+  };
+
+  const attachFile = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { url, key } = await uploadDocument(file);
+      await api.post(`/admin/complaints/${selected.dbId}/attachments`, {
+        name: file.name, url, key, size: file.size,
+      });
+      toast("Attachment added");
+      refresh();
+    } catch (e) {
+      toast(e.message || "Could not attach file", "error");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
 
   // Candidate assignees: committee members + staff/vendors — anyone the admin
   // can hand a complaint to, each carrying their own contact details.
@@ -85,20 +154,8 @@ export default function ComplaintsPage() {
     (c) => filter === "all" || c.status === filter,
   );
 
-  const resolve = async () => {
-    if (!selected) return;
-    setBusyAction("resolve");
-    try {
-      await api.post(`/admin/complaints/${selected.dbId}/resolve`);
-      toast(`${selected.id} marked resolved`);
-      setSelected(null);
-      reload();
-    } catch (e) {
-      toast(e.message || "Could not resolve", "error");
-    } finally {
-      setBusyAction(null);
-    }
-  };
+  const resolve = () => act("resolve", {}, "Marked resolved");
+
   const assign = async (assignee) => {
     const complaint = assignFor;
     if (!complaint || !assignee?.name?.trim()) return;
@@ -111,8 +168,7 @@ export default function ComplaintsPage() {
       });
       toast(`${complaint.id} assigned to ${assignee.name.trim()}`);
       setAssignFor(null);
-      setSelected(null);
-      reload();
+      refresh();
     } catch (e) {
       toast(e.message || "Could not assign", "error");
     } finally {
@@ -231,10 +287,21 @@ export default function ComplaintsPage() {
             <Button variant="ghost" icon="trash-2" onClick={() => setConfirmDelete(selected)}>
               Delete
             </Button>
-            <Button variant="secondary" icon="user-check" onClick={() => setAssignFor(selected)}>
-              {selected?.assignedTo ? "Reassign" : "Assign"}
-            </Button>
-            <Button icon="circle-check-big" loading={busyAction === "resolve"} onClick={resolve}>Mark resolved</Button>
+            {["resolved", "closed"].includes(detail?.status ?? selected?.status) ? (
+              <Button variant="secondary" icon="rotate-ccw" loading={busyAction === "reopen"} onClick={() => setReopenOpen(true)}>
+                Reopen
+              </Button>
+            ) : (
+              <>
+                <Button variant="secondary" icon="trending-up" loading={busyAction === "escalate"} disabled={escLevel === "l3"} onClick={escalate}>
+                  Escalate{escLevel ? ` (${ESC_LABEL[escLevel]})` : ""}
+                </Button>
+                <Button variant="secondary" icon="user-check" onClick={() => setAssignFor(selected)}>
+                  {selected?.assignedTo ? "Reassign" : "Assign"}
+                </Button>
+                <Button icon="circle-check-big" loading={busyAction === "resolve"} onClick={resolve}>Mark resolved</Button>
+              </>
+            )}
           </>
         }
       >
@@ -242,8 +309,11 @@ export default function ComplaintsPage() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="slate">{selected.id}</Badge>
-              <StatusBadge status={selected.status} />
+              <StatusBadge status={detail?.status ?? selected.status} />
               <StatusBadge status={selected.priority} />
+              {escLevel && <Badge tone="rose">Escalated · {ESC_LABEL[escLevel]}</Badge>}
+              {detail?.residentConfirmed && <Badge tone="green">Resident confirmed</Badge>}
+              {detail?.reopenCount > 0 && <Badge tone="amber">Reopened ×{detail.reopenCount}</Badge>}
               <span className="inline-flex items-center gap-1.5 text-sm text-slate-500">
                 <Icon name={catIcon[selected.category] ?? "circle-help"} size={14} />
                 {selected.category}
@@ -291,8 +361,89 @@ export default function ComplaintsPage() {
                 </a>
               )}
             </div>
+
+            {/* Attachments */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Attachments</h4>
+                <Button variant="ghost" icon="paperclip" loading={uploading} onClick={() => fileRef.current?.click()}>Add file</Button>
+                <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png" hidden
+                  onChange={(e) => attachFile(e.target.files?.[0])} />
+              </div>
+              {attachments.length === 0 ? (
+                <p className="text-xs text-slate-400">No attachments.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {attachments.map((a, i) => (
+                    <li key={i}>
+                      <a href={a.url} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 text-sm text-brand-700 hover:underline">
+                        <Icon name="file" size={14} /> {a.name}
+                        {a.size ? <span className="text-xs text-slate-400">({formatBytes(a.size)})</span> : null}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Timeline */}
+            <div>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Timeline</h4>
+              {events.length === 0 ? (
+                <p className="text-xs text-slate-400">No activity yet.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {events.map((e) => (
+                    <li key={e.id} className="flex gap-2.5 text-sm">
+                      <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500">
+                        <Icon name={EVENT_ICON[e.kind] ?? "dot"} size={13} />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-slate-700">
+                          {e.body}
+                          {e.internal && <Badge tone="amber" className="ml-2">internal</Badge>}
+                        </p>
+                        <p className="text-xs text-slate-400">{e.actorName || "system"} · {formatDate(e.createdAt)}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Add note */}
+            <div className="border-t border-slate-100 pt-4">
+              <Field label="Add note">
+                <textarea className={inputClass} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Internal note or update…" />
+              </Field>
+              <div className="mt-2 flex items-center justify-between">
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+                  Internal (hidden from resident)
+                </label>
+                <Button variant="secondary" icon="message-square-plus" loading={busyAction === "note"} onClick={addNote}>Add note</Button>
+              </div>
+            </div>
           </div>
         )}
+      </Modal>
+
+      {/* Reopen reason */}
+      <Modal
+        open={reopenOpen}
+        onClose={() => setReopenOpen(false)}
+        title="Reopen complaint"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setReopenOpen(false)}>Cancel</Button>
+            <Button icon="rotate-ccw" loading={busyAction === "reopen"} onClick={doReopen}>Reopen</Button>
+          </>
+        }
+      >
+        <Field label="Reason" hint="Recorded in the timeline and audit trail.">
+          <textarea className={inputClass} rows={3} value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} placeholder="Why is this being reopened?" />
+        </Field>
       </Modal>
 
       {/* Assign / reassign — pick a committee member, staff or vendor (contact attached) */}

@@ -41,6 +41,7 @@ export function homePath(role) {
   if (role === "super_admin") return "/super-admin";
   if (role === "admin") return "/admin";
   if (role === "guard") return "/guard";
+  if (role === "vendor") return "/vendor";
   return "/member";
 }
 

@@ -503,18 +503,32 @@ export function Tabs({ tabs, value, onChange }) {
 }
 
 /* ---------------- Field ---------------- */
-export function Field({ label, children, hint }) {
+export function Field({ label, children, hint, error, required }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium text-slate-600">{label}</span>
+      {label && (
+        <span className="mb-1.5 block text-xs font-medium text-slate-600">
+          {label}
+          {required && <span className="text-rose-500"> *</span>}
+        </span>
+      )}
       {children}
-      {hint && <span className="mt-1 block text-xs text-slate-400">{hint}</span>}
+      {error ? (
+        <span className="mt-1 block text-xs text-rose-500">{error}</span>
+      ) : hint ? (
+        <span className="mt-1 block text-xs text-slate-400">{hint}</span>
+      ) : null}
     </label>
   );
 }
 
 export const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100";
+
+// Append to inputClass when a field is invalid, so the control echoes the
+// inline error message with a red border/ring.
+export const inputErrorClass =
+  "border-rose-300 focus:border-rose-400 focus:ring-rose-100";
 
 /* ---------------- PasswordInput (with show/hide eye) ---------------- */
 export function PasswordInput({ value, onChange, placeholder, className, autoComplete = "new-password", ...props }) {
@@ -541,6 +555,66 @@ export function PasswordInput({ value, onChange, placeholder, className, autoCom
         <Icon name={show ? "eye-off" : "eye"} size={16} />
       </button>
     </div>
+  );
+}
+
+/* ---------------- Pagination ----------------
+   Pairs with the backend pagination envelope (total / page / pageSize /
+   totalPages) and useListControls. Shows the record range, a page-size picker
+   (10/25/50/100) and prev/next. Renders nothing when there's a single page and
+   no size picker to offer. */
+export function Pagination({ page, totalPages = 1, total, pageSize, onPage, onPageSize }) {
+  if (totalPages <= 1 && !onPageSize) return null;
+  const from = total != null && total > 0 ? (page - 1) * pageSize + 1 : 0;
+  const to = total != null ? Math.min(page * pageSize, total) : 0;
+  return (
+    <div className="flex flex-col gap-3 border-t border-slate-100 p-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-3">
+        {total != null && (
+          <span>{total === 0 ? "No records" : `${from}–${to} of ${total}`}</span>
+        )}
+        {onPageSize && (
+          <select
+            aria-label="Rows per page"
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            value={pageSize}
+            onChange={(e) => onPageSize(Number(e.target.value))}
+          >
+            {[10, 25, 50, 100].map((n) => (
+              <option key={n} value={n}>{n} / page</option>
+            ))}
+          </select>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <span>Page {page} of {totalPages}</span>
+        <Button variant="secondary" disabled={page <= 1} onClick={() => onPage(page - 1)}>Prev</Button>
+        <Button variant="secondary" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>Next</Button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- SortTh ----------------
+   A sortable table header. `sortKey` is the value sent to the backend's
+   allow-listed `sort` param; clicking toggles asc/desc via onSort(sortKey). */
+export function SortTh({ children, sortKey, sort, dir, onSort, className }) {
+  const active = sort === sortKey;
+  return (
+    <Th className={className}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className="inline-flex items-center gap-1 font-[inherit] uppercase tracking-wide hover:text-slate-700"
+      >
+        {children}
+        <Icon
+          name={active ? (dir === "asc" ? "chevron-up" : "chevron-down") : "chevrons-up-down"}
+          size={13}
+          className={active ? "text-slate-600" : "text-slate-300"}
+        />
+      </button>
+    </Th>
   );
 }
 

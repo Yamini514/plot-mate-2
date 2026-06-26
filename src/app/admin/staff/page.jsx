@@ -25,10 +25,14 @@ import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { AvatarUpload } from "@/components/AvatarUpload";
 import { formatINR, formatDate, validateAccount, validatePhone, digitsOnly } from "@/lib/utils";
+import { VendorPerformance } from "./VendorPerformance";
 
 const emptyForm = {
   name: "", role: "", phone: "", monthlySalary: "", joinedOn: "", type: "staff", status: "active",
   createLogin: false, email: "", password: "", confirmPassword: "", avatarUrl: "",
+  // vendor profile
+  categories: "", licenseNo: "", licenseExpiry: "", insurancePolicy: "", insuranceExpiry: "",
+  slaResponseHours: "", rateCard: "",
 };
 
 export default function StaffPage() {
@@ -42,6 +46,7 @@ export default function StaffPage() {
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [loginInfo, setLoginInfo] = useState(null); // { email, tempPassword } shown once
   const filtered = staff.filter((s) => filter === "all" || s.type === filter);
   const payroll = staff.reduce((s, x) => s + (x.monthlySalary || 0), 0);
 
@@ -61,8 +66,45 @@ export default function StaffPage() {
       joinedOn: s.joinedOn ? String(s.joinedOn).slice(0, 10) : "",
       type: s.type ?? "staff",
       status: s.status ?? "active",
+      categories: (s.categories ?? []).join(", "),
+      licenseNo: s.licenseNo ?? "",
+      licenseExpiry: s.licenseExpiry ? String(s.licenseExpiry).slice(0, 10) : "",
+      insurancePolicy: s.insurancePolicy ?? "",
+      insuranceExpiry: s.insuranceExpiry ? String(s.insuranceExpiry).slice(0, 10) : "",
+      slaResponseHours: s.slaResponseHours ?? "",
+      rateCard: s.rateCard ?? "",
     });
     setOpen(true);
+  };
+
+  const verifyVendor = async (s) => {
+    try {
+      await api.post(`/admin/staff/${s.dbId}/verify`, {});
+      toast(`${s.name} verified`);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not verify", "error");
+    }
+  };
+
+  const togglePreferred = async (s) => {
+    try {
+      await api.post(`/admin/staff/${s.dbId}/preferred`, {});
+      toast(s.preferred ? `${s.name} removed from preferred` : `${s.name} marked preferred`);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not update", "error");
+    }
+  };
+
+  // Issue a vendor-portal login; show the one-time temp password.
+  const createLogin = async (s) => {
+    try {
+      const { data } = await api.post(`/admin/staff/${s.dbId}/create-login`, {});
+      setLoginInfo({ name: s.name, email: data.email, tempPassword: data.tempPassword });
+    } catch (e) {
+      toast(e.message || "Could not create login", "error");
+    }
   };
 
   const save = async () => {
@@ -88,6 +130,17 @@ export default function StaffPage() {
       type: form.type,
       status: form.status,
     };
+    if (form.type === "vendor") {
+      Object.assign(payload, {
+        categories: form.categories ? form.categories.split(",").map((c) => c.trim()).filter(Boolean) : [],
+        licenseNo: form.licenseNo.trim() || null,
+        licenseExpiry: form.licenseExpiry || null,
+        insurancePolicy: form.insurancePolicy.trim() || null,
+        insuranceExpiry: form.insuranceExpiry || null,
+        slaResponseHours: form.slaResponseHours ? Number(form.slaResponseHours) : null,
+        rateCard: form.rateCard.trim() || null,
+      });
+    }
     setSaving(true);
     try {
       if (editing) {
@@ -188,9 +241,15 @@ export default function StaffPage() {
                 <Td className="text-slate-600">
                   {s.role}
                   {s.type === "vendor" && (
-                    <Badge tone="violet" className="ml-2">
-                      Vendor
-                    </Badge>
+                    <>
+                      <Badge tone="violet" className="ml-2">Vendor</Badge>
+                      {s.verified ? (
+                        <Badge tone="green" className="ml-1">verified</Badge>
+                      ) : (
+                        <Badge tone="amber" className="ml-1">unverified</Badge>
+                      )}
+                      {s.preferred && <Badge tone="sky" className="ml-1">preferred</Badge>}
+                    </>
                   )}
                 </Td>
                 <Td className="text-slate-500">{s.phone}</Td>
@@ -201,6 +260,36 @@ export default function StaffPage() {
                 </Td>
                 <Td>
                   <div className="flex justify-end gap-1">
+                    {s.type === "vendor" && !s.verified && (
+                      <button
+                        onClick={() => verifyVendor(s)}
+                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-green-50 hover:text-green-600"
+                        title="Verify vendor"
+                      >
+                        <Icon name="badge-check" size={15} />
+                      </button>
+                    )}
+                    {s.type === "vendor" && (
+                      <button
+                        onClick={() => togglePreferred(s)}
+                        className={
+                          "grid h-8 w-8 place-items-center rounded-lg hover:bg-sky-50 " +
+                          (s.preferred ? "text-sky-500" : "text-slate-400 hover:text-sky-600")
+                        }
+                        title={s.preferred ? "Remove from preferred" : "Mark preferred"}
+                      >
+                        <Icon name="star" size={15} />
+                      </button>
+                    )}
+                    {s.type === "vendor" && (
+                      <button
+                        onClick={() => createLogin(s)}
+                        className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-violet-50 hover:text-violet-600"
+                        title="Create vendor portal login"
+                      >
+                        <Icon name="key-round" size={15} />
+                      </button>
+                    )}
                     <button
                       onClick={() => openEdit(s)}
                       className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"
@@ -269,6 +358,30 @@ export default function StaffPage() {
           )}
         </div>
 
+        {/* Vendor profile — compliance, categories, SLA, pricing */}
+        {form.type === "vendor" && (
+          <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50/40 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-violet-700">Vendor profile</p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <Field label="Service categories" hint="Comma-separated, e.g. plumbing, electrical">
+                  <input className={inputClass} value={form.categories} onChange={(e) => setForm({ ...form, categories: e.target.value })} placeholder="plumbing, electrical" />
+                </Field>
+              </div>
+              <Field label="License number"><input className={inputClass} value={form.licenseNo} onChange={(e) => setForm({ ...form, licenseNo: e.target.value })} /></Field>
+              <Field label="License expiry"><input type="date" className={inputClass} value={form.licenseExpiry} onChange={(e) => setForm({ ...form, licenseExpiry: e.target.value })} /></Field>
+              <Field label="Insurance policy"><input className={inputClass} value={form.insurancePolicy} onChange={(e) => setForm({ ...form, insurancePolicy: e.target.value })} /></Field>
+              <Field label="Insurance expiry"><input type="date" className={inputClass} value={form.insuranceExpiry} onChange={(e) => setForm({ ...form, insuranceExpiry: e.target.value })} /></Field>
+              <Field label="SLA response (hours)"><input type="number" className={inputClass} value={form.slaResponseHours} onChange={(e) => setForm({ ...form, slaResponseHours: e.target.value })} placeholder="e.g. 8" /></Field>
+              <Field label="Rate card / pricing"><input className={inputClass} value={form.rateCard} onChange={(e) => setForm({ ...form, rateCard: e.target.value })} placeholder="₹500 visit + parts" /></Field>
+            </div>
+            {editing && (
+              <p className="mt-2 text-xs text-slate-500">Use the <Icon name="badge-check" size={12} className="inline" /> verify action in the list once compliance docs are checked — only verified vendors are eligible for work-order assignment.</p>
+            )}
+            {editing && <VendorPerformance staffId={editing.dbId} />}
+          </div>
+        )}
+
         {/* Optional security login (only when adding a new person) */}
         {!editing && (
           <div className="mt-4 rounded-xl border border-slate-200 p-4">
@@ -311,6 +424,33 @@ export default function StaffPage() {
         title="Remove staff / vendor"
         message={`Remove "${confirmDelete?.name}" from the staff register? Any linked login account is not affected.`}
       />
+
+      {/* One-time vendor login credentials */}
+      <Modal
+        open={!!loginInfo}
+        onClose={() => setLoginInfo(null)}
+        title="Vendor login created"
+        footer={<Button onClick={() => setLoginInfo(null)}>Done</Button>}
+      >
+        <p className="text-sm text-slate-600">
+          Share these credentials with <span className="font-medium">{loginInfo?.name}</span>. The
+          temporary password is shown <span className="font-medium">only once</span> — they can
+          reset it from the login screen.
+        </p>
+        <div className="mt-3 space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-slate-400">Email</span>
+            <span className="font-mono font-medium text-slate-800">{loginInfo?.email}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-slate-400">Temp password</span>
+            <span className="font-mono font-medium text-slate-800">{loginInfo?.tempPassword}</span>
+          </div>
+        </div>
+        <p className="mt-3 flex items-center gap-1.5 text-xs text-slate-400">
+          <Icon name="info" size={12} /> They sign in at the same login page and land on the vendor portal.
+        </p>
+      </Modal>
     </div>
   );
 }
