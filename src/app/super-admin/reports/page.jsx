@@ -1,10 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { PageHeader, Card, StatCard, Segmented, Badge, Button } from "@/components/ui";
+import { PageHeader, Card, StatCard, Segmented, Badge, Button, inputClass } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useApi } from "@/lib/useApi";
-import { downloadCSV } from "@/lib/utils";
+import { downloadCSV, downloadExcel, printReport } from "@/lib/utils";
+
+const PERIODS = [
+  { value: 3, label: "3 months" },
+  { value: 6, label: "6 months" },
+  { value: 12, label: "12 months" },
+  { value: 24, label: "24 months" },
+];
 
 const REPORTS = [
   { value: "venture-growth", label: "Venture growth", path: "/super/reports/venture-growth", icon: "building-2", tone: "brand" },
@@ -37,19 +44,27 @@ function BarChart({ series }) {
 
 export default function ReportsPage() {
   const [report, setReport] = useState("venture-growth");
+  const [months, setMonths] = useState(12);
   const meta = REPORTS.find((r) => r.value === report);
-  const { data, loading } = useApi(meta.path, { months: 12 });
+  const { data, loading } = useApi(meta.path, { months });
 
   const series = data?.period ?? [];
   const cumulative = data?.cumulative ?? [];
+  const exportable = report !== "revenue" && report !== "active-ventures";
 
-  // Build the CSV client-side from the fetched series — a raw download link
+  // Build exports client-side from the fetched series — a raw download link
   // wouldn't carry the JWT, so we never hit the auth-gated export endpoint here.
-  const exportCsv = () =>
-    downloadCSV(`${report}.csv`, series, [
-      { label: "Month", get: (r) => r.month },
-      { label: "Count", get: (r) => r.count },
-    ]);
+  const COLUMNS = [
+    { label: "Month", get: (r) => r.month },
+    { label: "Count", get: (r) => r.count },
+  ];
+  const title = `${meta.label} — last ${months} months`;
+  const exportAs = (format) => {
+    if (series.length === 0) return;
+    if (format === "csv") downloadCSV(`${report}.csv`, series, COLUMNS);
+    else if (format === "excel") downloadExcel(`${report}.xls`, series, COLUMNS, title);
+    else if (format === "pdf") printReport(title, series, COLUMNS, "PlotMate platform report");
+  };
 
   return (
     <div className="animate-fade-in">
@@ -57,16 +72,23 @@ export default function ReportsPage() {
         title="Reports & analytics"
         subtitle="Platform growth and registration trends"
         actions={
-          report !== "revenue" && report !== "active-ventures" ? (
-            <Button variant="secondary" icon="download" onClick={exportCsv} disabled={series.length === 0}>
-              Export CSV
-            </Button>
+          exportable ? (
+            <div className="flex gap-2">
+              <Button variant="secondary" icon="file-text" onClick={() => exportAs("csv")} disabled={series.length === 0}>CSV</Button>
+              <Button variant="secondary" icon="sheet" onClick={() => exportAs("excel")} disabled={series.length === 0}>Excel</Button>
+              <Button variant="secondary" icon="printer" onClick={() => exportAs("pdf")} disabled={series.length === 0}>PDF</Button>
+            </div>
           ) : null
         }
       />
 
-      <div className="mb-4">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Segmented value={report} onChange={setReport} options={REPORTS.map((r) => ({ value: r.value, label: r.label }))} />
+        {exportable && (
+          <select className={`${inputClass} w-36`} value={months} onChange={(e) => setMonths(Number(e.target.value))}>
+            {PERIODS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        )}
       </div>
 
       {report === "active-ventures" ? (
@@ -100,7 +122,7 @@ export default function ReportsPage() {
           </div>
           <Card className="p-5">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-800">{meta.label} · last 12 months</h2>
+              <h2 className="text-sm font-semibold text-slate-800">{meta.label} · last {months} months</h2>
               {cumulative.length > 0 && <Badge tone="brand">cumulative {cumulative.at(-1)?.count ?? 0}</Badge>}
             </div>
             {loading ? (

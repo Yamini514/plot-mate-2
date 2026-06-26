@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import {
-  PageHeader, Card, Button, Badge, Segmented, Table, Th, Td, Tr, Modal, Field, inputClass,
+  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, Modal, Field, inputClass, Pagination,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
 import { useApi, useDebounced } from "@/lib/useApi";
+import { useListControls } from "@/lib/useList";
 import { useToast } from "@/components/Toast";
 
 const ROLE_LABEL = { 0: "Owner", 1: "Guard", 2: "Venture Admin", 3: "Super Admin" };
@@ -17,10 +18,10 @@ export default function PlatformUsersPage() {
   const [filter, setFilter] = useState("all");
   const [role, setRole] = useState("");
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
+  const c = useListControls();
   const q = useDebounced(search);
   const { data: raw, meta, reload, loading } = useApi("/super/users", {
-    status: filter, role, search: q, page,
+    status: filter, role, search: q, ...c.query,
   });
   const users = normalizeList(raw);
   const counts = meta?.counts ?? {};
@@ -74,7 +75,7 @@ export default function PlatformUsersPage() {
         <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
           <Segmented
             value={filter}
-            onChange={(v) => { setFilter(v); setPage(1); }}
+            onChange={(v) => { setFilter(v); c.setPage(1); }}
             options={[
               { value: "all", label: "All", count: counts.all },
               { value: "active", label: "Active", count: counts.active },
@@ -82,7 +83,7 @@ export default function PlatformUsersPage() {
             ]}
           />
           <div className="flex gap-2">
-            <select className={`${inputClass} w-40`} value={role} onChange={(e) => { setRole(e.target.value); setPage(1); }}>
+            <select className={`${inputClass} w-40`} value={role} onChange={(e) => { setRole(e.target.value); c.setPage(1); }}>
               <option value="">All roles</option>
               <option value="0">Owners</option>
               <option value="1">Guards</option>
@@ -94,7 +95,7 @@ export default function PlatformUsersPage() {
                 className="w-full rounded-lg border border-slate-200 py-2 pl-8 pr-3 text-sm sm:w-64"
                 placeholder="Search name or email"
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                onChange={(e) => { setSearch(e.target.value); c.setPage(1); }}
               />
             </div>
           </div>
@@ -102,8 +103,8 @@ export default function PlatformUsersPage() {
         <Table>
           <thead>
             <tr>
-              <Th>User</Th>
-              <Th>Role</Th>
+              <SortTh sortKey="name" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>User</SortTh>
+              <SortTh sortKey="role" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Role</SortTh>
               <Th>Venture</Th>
               <Th>Status</Th>
               <Th></Th>
@@ -148,15 +149,14 @@ export default function PlatformUsersPage() {
             )}
           </tbody>
         </Table>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between border-t border-slate-100 p-3 text-sm text-slate-500">
-            <span>Page {page} of {totalPages}</span>
-            <div className="flex gap-2">
-              <Button variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Prev</Button>
-              <Button variant="secondary" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
-            </div>
-          </div>
-        )}
+        <Pagination
+          page={c.page}
+          totalPages={totalPages}
+          total={meta?.total}
+          pageSize={c.pageSize}
+          onPage={c.setPage}
+          onPageSize={c.setPageSize}
+        />
       </Card>
 
       <Modal

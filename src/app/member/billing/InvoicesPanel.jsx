@@ -53,13 +53,11 @@ export function InvoicesPanel() {
     }
     setSaving(true);
     try {
-      let last;
       for (const b of bills) {
-        const { data } = await api.post("/member/billing/pay", { invoiceId: b.dbId, mode: method });
-        last = data;
+        await api.post("/member/billing/pay", { invoiceId: b.dbId, mode: method });
       }
       const total = bills.reduce((s, b) => s + b.balance, 0);
-      setReceipt({ id: last?.receiptNumber, amount: total, method, paidOn: today(), count: bills.length });
+      setReceipt({ amount: total, method, submittedOn: today(), count: bills.length });
       if (autopay) toast("Autopay enabled for future bills", "info");
       setPay(null);
       reload();
@@ -190,22 +188,23 @@ export function InvoicesPanel() {
         )}
       </Modal>
 
-      {/* Receipt */}
+      {/* Submitted-for-verification confirmation */}
       <Modal
         open={!!receipt}
         onClose={() => setReceipt(null)}
-        title="Payment receipt"
-        footer={<Button icon="printer" onClick={() => window.print()}>Print / Save PDF</Button>}
+        title="Payment submitted"
+        footer={<Button icon="check" onClick={() => setReceipt(null)}>Done</Button>}
       >
         {receipt && (
           <div className="space-y-4">
-            <div className="rounded-xl bg-brand-50 p-4 text-center">
-              <p className="text-xs uppercase tracking-wider text-brand-600">Receipt no.</p>
-              <p className="text-lg font-bold text-brand-800">{receipt.id}</p>
+            <div className="rounded-xl bg-amber-50 p-4 text-center">
+              <Icon name="clock" size={24} className="mx-auto text-amber-600" />
+              <p className="mt-1 font-semibold text-amber-800">Awaiting verification</p>
+              <p className="text-xs text-amber-700">The association will verify your payment and issue a receipt.</p>
             </div>
             <div className="rounded-xl border border-slate-200">
               <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 text-sm">
-                <span className="text-slate-500">Bills paid</span>
+                <span className="text-slate-500">Invoices</span>
                 <span className="font-medium text-slate-700">{receipt.count}</span>
               </div>
               <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 text-sm">
@@ -213,15 +212,14 @@ export function InvoicesPanel() {
                 <span className="font-medium uppercase text-slate-700">{receipt.method}</span>
               </div>
               <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 text-sm">
-                <span className="text-slate-500">Date</span>
-                <span className="font-medium text-slate-700">{receipt.paidOn}</span>
+                <span className="text-slate-500">Submitted</span>
+                <span className="font-medium text-slate-700">{receipt.submittedOn}</span>
               </div>
               <div className="flex items-center justify-between px-4 py-3">
-                <span className="text-sm font-semibold text-slate-800">Amount paid</span>
-                <span className="text-base font-bold text-brand-700">{formatINR(receipt.amount)}</span>
+                <span className="text-sm font-semibold text-slate-800">Amount</span>
+                <span className="text-base font-bold text-slate-700">{formatINR(receipt.amount)}</span>
               </div>
             </div>
-            <p className="text-center text-xs text-slate-400">Thank you · a copy has been emailed to you.</p>
           </div>
         )}
       </Modal>

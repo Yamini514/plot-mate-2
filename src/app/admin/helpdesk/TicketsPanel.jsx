@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   PageHeader,
   Card,
@@ -30,6 +30,7 @@ import {
 } from "@/lib/helpdesk-data";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import { WorkOrderMaterials } from "@/components/WorkOrderMaterials";
 
 const catMeta = (v) => CATEGORIES.find((c) => c.value === v) ?? { label: v, icon: "circle-help" };
 
@@ -67,6 +68,120 @@ export function TicketsPanel() {
   const [saving, setSaving] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(null);
   const [drawerBusy, setDrawerBusy] = useState(null);
+  // Drawer detail (photos, completion note) + work-order action inputs.
+  const [detail, setDetail] = useState(null);
+  const [vendors, setVendors] = useState([]);
+  const [vendorSel, setVendorSel] = useState("");
+  const [note, setNote] = useState("");
+  const [labourCost, setLabourCost] = useState("");
+  const [rateScore, setRateScore] = useState(0);
+  const [reason, setReason] = useState("");
+  const [photoUrl, setPhotoUrl] = useState("");
+  const [photoKind, setPhotoKind] = useState("before");
+
+  // When a ticket drawer opens, load its photos + the eligible vendors for its
+  // category so the admin can assign a specific verified vendor.
+  useEffect(() => {
+    if (!active) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear detail when drawer closes
+      setDetail(null);
+      return;
+    }
+    setNote("");
+    setReason("");
+    setPhotoUrl("");
+    setVendorSel("");
+    let cancelled = false;
+    (async () => {
+      try {
+        const [d, v] = await Promise.all([
+          api.get(`/admin/helpdesk/tickets/${active.dbId}`),
+          api.get("/admin/staff/eligible", { category: active.category }),
+        ]);
+        if (cancelled) return;
+        setDetail(d.data);
+        setVendors(normalizeList(v.data));
+      } catch {
+        if (!cancelled) setDetail(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active]);
+
+  const refreshDetail = async () => {
+    if (!active) return;
+    try {
+      const d = await api.get(`/admin/helpdesk/tickets/${active.dbId}`);
+      setDetail(d.data);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const assignVendor = async () => {
+    if (!vendorSel) return toast("Pick a vendor", "error");
+    setDrawerBusy("assignVendor");
+    try {
+      await api.post(`/admin/helpdesk/tickets/${active.dbId}/assign`, { assigneeStaffId: Number(vendorSel) });
+      toast("Vendor assigned");
+      setActive(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not assign", "error");
+    } finally {
+      setDrawerBusy(null);
+    }
+  };
+
+  const completeWithNote = async () => {
+    if (!note.trim()) return toast("Add a completion note", "error");
+    setDrawerBusy("complete");
+    try {
+      await api.post(`/admin/helpdesk/tickets/${active.dbId}/complete`, {
+        completion_note: note.trim(),
+        labour_cost: labourCost === "" ? undefined : Number(labourCost),
+      });
+      toast("Marked resolved — owner notified");
+      setActive(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not complete", "error");
+    } finally {
+      setDrawerBusy(null);
+    }
+  };
+
+  const rejectWork = async () => {
+    if (!reason.trim()) return toast("Add a reason", "error");
+    setDrawerBusy("reject");
+    try {
+      await api.post(`/admin/helpdesk/tickets/${active.dbId}/reject`, { reason: reason.trim() });
+      toast("Sent back to the queue");
+      setActive(null);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not reject", "error");
+    } finally {
+      setDrawerBusy(null);
+    }
+  };
+
+  const addPhoto = async () => {
+    if (!photoUrl.trim()) return toast("Paste a photo URL", "error");
+    setDrawerBusy("photo");
+    try {
+      await api.post(`/admin/helpdesk/tickets/${active.dbId}/photos`, { url: photoUrl.trim(), kind: photoKind });
+      setPhotoUrl("");
+      toast("Photo added");
+      refreshDetail();
+    } catch (e) {
+      toast(e.message || "Could not add photo", "error");
+    } finally {
+      setDrawerBusy(null);
+    }
+  };
 
   const counts = useMemo(() => {
     const c = { all: rows.length };
@@ -381,6 +496,54 @@ export function TicketsPanel() {
               <p className="mt-2 text-xs text-slate-400">
                 Routing rule: <span className="font-medium text-slate-600">{catMeta(active.category).label} → {ASSIGNMENT_MAP[active.category] ?? "Front Office"}</span>
               </p>
+              {/* Assign a specific verified vendor */}
+              <div className="mt-3 flex items-end gap-2 border-t border-slate-200 pt-3">
+                <Field label="Assign a verified vendor">
+                  <select className={inputClass} value={vendorSel} onChange={(e) => setVendorSel(e.target.value)}>
+                    <option value="">{vendors.length ? "Select a vendor…" : "No eligible vendors for this category"}</option>
+                    {vendors.map((v) => (
+                      <option key={v.dbId} value={v.dbId}>
+                        {v.name}{v.preferred ? " ★" : ""}{v.slaResponseHours ? ` · ${v.slaResponseHours}h SLA` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Button size="sm" icon="user-check" loading={drawerBusy === "assignVendor"} disabled={!vendorSel} onClick={assignVendor}>Assign</Button>
+              </div>
+            </div>
+
+            {/* Before / after work photos */}
+            <div className="rounded-xl bg-slate-50 p-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Work photos</p>
+              <div className="grid grid-cols-2 gap-3">
+                {[["Before", "before"], ["After", "after"]].map(([label, kind]) => {
+                  const list = (detail?.photos ?? []).filter((p) => p.kind === kind);
+                  return (
+                    <div key={kind}>
+                      <p className="mb-1 text-xs font-medium text-slate-500">{label}</p>
+                      <div className="flex flex-wrap gap-2">
+                        {list.map((p) => (
+                          <a key={p.id} href={p.url} target="_blank" rel="noopener noreferrer">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={p.url} alt={p.caption || label} className="h-14 w-14 rounded-lg object-cover ring-1 ring-slate-200" />
+                          </a>
+                        ))}
+                        {list.length === 0 && <span className="text-xs text-slate-300">—</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-3 flex items-end gap-2">
+                <Field label="Add a photo (URL)">
+                  <input className={inputClass} placeholder="https://…/photo.jpg" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} />
+                </Field>
+                <select className={inputClass + " w-28"} value={photoKind} onChange={(e) => setPhotoKind(e.target.value)}>
+                  <option value="before">Before</option>
+                  <option value="after">After</option>
+                </select>
+                <Button size="sm" variant="secondary" icon="image-plus" loading={drawerBusy === "photo"} onClick={addPhoto}>Add</Button>
+              </div>
             </div>
 
             {/* Workflow timeline */}
@@ -396,15 +559,69 @@ export function TicketsPanel() {
               </div>
             </div>
 
-            {/* Comment box */}
-            <div>
-              <Field label="Add an internal note">
-                <textarea rows={2} className={inputClass} placeholder="Update the requester or team…" />
+            {/* Vendor decline reason (if any) */}
+            {detail?.rejectedReason && (
+              <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                Vendor declined: {detail.rejectedReason}
+              </div>
+            )}
+
+            {/* Materials & cost */}
+            {detail && (
+              <WorkOrderMaterials base="/admin/helpdesk/tickets" ticketId={active.dbId} detail={detail} onChanged={refreshDetail} />
+            )}
+
+            {/* Rate the vendor (once a vendor is assigned) */}
+            {detail?.assigneeStaffId && (
+              <div className="rounded-xl border border-slate-200 p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Rate vendor</p>
+                <div className="flex items-center gap-2">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button key={n} onClick={() => setRateScore(n)} className={n <= rateScore ? "text-amber-400" : "text-slate-300 hover:text-amber-300"}>
+                      <Icon name="star" size={20} />
+                    </button>
+                  ))}
+                  <Button size="sm" variant="secondary" className="ml-auto" loading={drawerBusy === "rate"} disabled={!rateScore}
+                    onClick={async () => {
+                      setDrawerBusy("rate");
+                      try {
+                        await api.post(`/admin/staff/${detail.assigneeStaffId}/rate`, { score: rateScore, ticketId: active.dbId });
+                        toast("Vendor rated");
+                        setRateScore(0);
+                      } catch (e) { toast(e.message || "Could not rate", "error"); }
+                      finally { setDrawerBusy(null); }
+                    }}>Submit rating</Button>
+                </div>
+              </div>
+            )}
+
+            {/* Complete with a report (notifies the owner) */}
+            <div className="rounded-xl border border-slate-200 p-4">
+              <Field label="Completion note">
+                <textarea rows={2} className={inputClass} placeholder="What was done…" value={note} onChange={(e) => setNote(e.target.value)} />
+              </Field>
+              <Field label="Labour cost (₹)">
+                <input type="number" min="0" className={inputClass} placeholder="0" value={labourCost} onChange={(e) => setLabourCost(e.target.value)} />
               </Field>
               <div className="mt-2 flex justify-end">
-                <Button size="sm" variant="secondary" icon="message-square" onClick={() => toast("Note added")}>Add note</Button>
+                <Button size="sm" icon="circle-check-big" loading={drawerBusy === "complete"} onClick={completeWithNote}>Complete &amp; notify owner</Button>
+              </div>
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <Field label="Send back to queue (reason)">
+                  <input className={inputClass} placeholder="e.g. vendor unavailable — reassign" value={reason} onChange={(e) => setReason(e.target.value)} />
+                </Field>
+                <div className="mt-2 flex justify-end">
+                  <Button size="sm" variant="secondary" icon="undo-2" loading={drawerBusy === "reject"} onClick={rejectWork}>Send back</Button>
+                </div>
               </div>
             </div>
+
+            {detail?.completionNote && (
+              <div>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Completion note</p>
+                <p className="text-sm text-slate-600">{detail.completionNote}</p>
+              </div>
+            )}
           </div>
         )}
       </Drawer>

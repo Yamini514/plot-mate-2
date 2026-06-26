@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import {
-  PageHeader, Card, Button, Badge, Segmented, Table, Th, Td, Tr, Modal,
+  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, Modal, Pagination,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
 import { useApi, useDebounced } from "@/lib/useApi";
+import { useListControls } from "@/lib/useList";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
 
@@ -14,10 +15,12 @@ export default function VentureAdminsPage() {
   const toast = useToast();
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const c = useListControls();
   const q = useDebounced(search);
-  const { data: raw, meta, reload, loading } = useApi("/super/venture-admins", { status: filter, search: q });
+  const { data: raw, meta, reload, loading } = useApi("/super/venture-admins", { status: filter, search: q, ...c.query });
   const admins = normalizeList(raw);
   const counts = meta?.counts ?? {};
+  const totalPages = meta?.totalPages ?? 1;
 
   const [busyId, setBusyId] = useState(null);
   const [reset, setReset] = useState(null);        // admin pending reset
@@ -60,7 +63,7 @@ export default function VentureAdminsPage() {
         <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
           <Segmented
             value={filter}
-            onChange={setFilter}
+            onChange={(v) => { setFilter(v); c.setPage(1); }}
             options={[
               { value: "all", label: "All", count: counts.all },
               { value: "active", label: "Active", count: counts.active },
@@ -73,14 +76,14 @@ export default function VentureAdminsPage() {
               className="w-full rounded-lg border border-slate-200 py-2 pl-8 pr-3 text-sm sm:w-64"
               placeholder="Search name or email"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); c.setPage(1); }}
             />
           </div>
         </div>
         <Table>
           <thead>
             <tr>
-              <Th>Admin</Th>
+              <SortTh sortKey="name" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Admin</SortTh>
               <Th>Venture</Th>
               <Th>Phone</Th>
               <Th>Last login</Th>
@@ -122,6 +125,14 @@ export default function VentureAdminsPage() {
             )}
           </tbody>
         </Table>
+        <Pagination
+          page={c.page}
+          totalPages={totalPages}
+          total={meta?.total}
+          pageSize={c.pageSize}
+          onPage={c.setPage}
+          onPageSize={c.setPageSize}
+        />
       </Card>
 
       <Modal

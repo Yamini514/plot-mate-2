@@ -156,7 +156,7 @@ export function AppShell({ nav, role, children }) {
   // to their own. (null = don't show the Help desk shortcut.)
   const helpHref =
     role === "guard" ? "/guard/tickets"
-    : role === "super_admin" ? null
+    : role === "super_admin" || role === "vendor" ? null
     : `/${role}/helpdesk`;
   const hasAnnouncements = role === "admin" || role === "member";
 

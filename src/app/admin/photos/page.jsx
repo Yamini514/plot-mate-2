@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   PageHeader,
   Card,
@@ -17,6 +17,7 @@ import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
+import { uploadImage } from "@/lib/upload";
 
 const UPLOAD_CATEGORIES = ["Road work", "Street lights", "Compound wall", "Plantation", "Drainage", "Other"];
 
@@ -27,9 +28,12 @@ export default function AdminPhotosPage() {
   const [cat, setCat] = useState("all");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ category: "Road work", customCategory: "", caption: "" });
+  const [imageUrl, setImageUrl] = useState("");
+  const [processing, setProcessing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const fileRef = useRef(null);
 
   const categories = useMemo(
     () => ["all", ...Array.from(new Set(photos.map((p) => p.category)))],
@@ -37,25 +41,53 @@ export default function AdminPhotosPage() {
   );
   const filtered = photos.filter((p) => cat === "all" || p.category === cat);
 
-  // Note: real images upload to S3 via /admin/documents/presign; this stores a
-  // placeholder URL until AWS keys are configured.
+  const resetForm = () => {
+    setForm({ category: "Road work", customCategory: "", caption: "" });
+    setImageUrl("");
+  };
+
+  const closeModal = () => {
+    setOpen(false);
+    resetForm();
+  };
+
+  // Process the chosen file to a URL up front (S3 when configured, inline data
+  // URL otherwise) so the modal can preview it before the row is saved.
+  const pickImage = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast("Please choose an image (JPG/PNG)", "error");
+      return;
+    }
+    setProcessing(true);
+    try {
+      setImageUrl(await uploadImage(file));
+    } catch {
+      toast("Couldn't process that image", "error");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const upload = async () => {
     const category = form.category === "Other" ? form.customCategory.trim() : form.category;
     if (form.category === "Other" && !category) {
       toast("Enter the photo category", "error");
       return;
     }
-    const colors = ["10b981", "0ea5e9", "f59e0b", "8b5cf6", "ef4444", "14b8a6"];
+    if (!imageUrl) {
+      toast("Choose an image to upload", "error");
+      return;
+    }
     setSaving(true);
     try {
       await api.post("/admin/photos", {
-        url: `https://placehold.co/600x400/${colors[photos.length % colors.length]}/ffffff?text=${encodeURIComponent(category)}`,
+        url: imageUrl,
         caption: form.caption.trim() || category,
         category,
       });
       toast("Photo uploaded");
-      setForm({ category: "Road work", customCategory: "", caption: "" });
-      setOpen(false);
+      closeModal();
       reload();
     } catch (e) {
       toast(e.message || "Upload failed", "error");
@@ -132,23 +164,49 @@ export default function AdminPhotosPage() {
 
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeModal}
         title="Upload site photo"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={upload} loading={saving}>Upload</Button>
+            <Button variant="secondary" onClick={closeModal}>Cancel</Button>
+            <Button onClick={upload} loading={saving} disabled={processing || !imageUrl}>Upload</Button>
           </>
         }
       >
         <div className="space-y-4">
-          <div className="grid place-items-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center">
-            <Icon name="image-up" size={28} className="text-slate-400" />
-            <p className="mt-2 text-sm font-medium text-slate-600">
-              Drag &amp; drop or click to upload
-            </p>
-            <p className="text-xs text-slate-400">JPG, PNG, HEIC up to 10 MB</p>
-          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              pickImage(file);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={processing}
+            className="relative grid w-full place-items-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center hover:border-brand-400 disabled:opacity-60"
+          >
+            {imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={imageUrl} alt="Selected" className="max-h-48 w-full rounded-lg object-contain" />
+            ) : (
+              <>
+                <Icon name="image-up" size={28} className="text-slate-400" />
+                <p className="mt-2 text-sm font-medium text-slate-600">Click to choose a photo</p>
+                <p className="text-xs text-slate-400">JPG or PNG · auto-resized</p>
+              </>
+            )}
+            {processing && (
+              <span className="absolute inset-0 grid place-items-center bg-white/60">
+                <Icon name="loader-circle" size={28} className="animate-spin text-brand-600" />
+              </span>
+            )}
+          </button>
           <Field label="Category">
             <select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
               {UPLOAD_CATEGORIES.map((c) => (

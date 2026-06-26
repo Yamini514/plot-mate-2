@@ -7,6 +7,8 @@ import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { ReceiptsModal } from "@/components/ReceiptsModal";
 import { SendReminderModal } from "@/components/SendReminderModal";
+import { GeneratePlotsModal } from "@/components/GeneratePlotsModal";
+import { DetectPlotsModal } from "@/components/DetectPlotsModal";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { formatINR, cn } from "@/lib/utils";
@@ -21,6 +23,8 @@ import {
 } from "./mapkit";
 
 const PLOT_STATUSES = ["available", "booked", "sold", "blocked"]; // admin-settable lifecycle
+
+const csvEscape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
 export default function PlotMapWorkspace() {
   const { data: plots, reload: reloadPlots } = useApi("/admin/plots", { page_size: 300 });
@@ -70,6 +74,8 @@ export default function PlotMapWorkspace() {
   );
 
   const [dark, setDark] = useState(true);
+  const [view, setView] = useState("map"); // map | grid — one workspace, two lenses
+  const [viewPinned, setViewPinned] = useState(false); // true once the admin picks a lens
   const [filter, setFilter] = useState("all"); // all | <status>
   const [phase, setPhase] = useState("all");
   const [q, setQ] = useState("");
@@ -80,6 +86,17 @@ export default function PlotMapWorkspace() {
   const [receiptsFor, setReceiptsFor] = useState(null);
   const [reminderFor, setReminderFor] = useState(null);
   const [savingStatus, setSavingStatus] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [genOpen, setGenOpen] = useState(false);
+  const [detectOpen, setDetectOpen] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const [detectResult, setDetectResult] = useState(null);
+
+  // Plot numbers already on file — so the generator can skip duplicates.
+  const existingPlotNos = useMemo(
+    () => new Set(allPlots.map((p) => p.plotNo).filter(Boolean)),
+    [allPlots],
+  );
 
   // Editor state
   const [mode, setMode] = useState("view"); // view | edit
@@ -103,6 +120,19 @@ export default function PlotMapWorkspace() {
     () => ["all", ...Array.from(new Set(allPlots.map((p) => p.phase).filter(Boolean))).sort()],
     [allPlots],
   );
+
+  // Grid view: plots grouped into per-phase blocks, sorted by number within each;
+  // phase-less plots fall into a trailing "Unassigned" block. Mirrors the spatial
+  // organisation of the site plan without needing an uploaded image.
+  const gridBlocks = useMemo(() => {
+    const byNo = (a, b) => (a.plotNo || "").localeCompare(b.plotNo || "", undefined, { numeric: true });
+    const named = Array.from(new Set(allPlots.map((p) => p.phase).filter(Boolean)))
+      .sort()
+      .map((ph) => ({ phase: ph, lots: allPlots.filter((p) => p.phase === ph).sort(byNo) }));
+    const unphased = allPlots.filter((p) => !p.phase).sort(byNo);
+    if (unphased.length) named.push({ phase: "Unassigned", lots: unphased });
+    return named.filter((b) => b.lots.length);
+  }, [allPlots]);
 
   // What the canvas renders. View mode: saved regions, narrowed by the status /
   // phase filters (labels always shown for context). Edit mode: the full draft.
@@ -147,8 +177,28 @@ export default function PlotMapWorkspace() {
       await api.put("/admin/plot-map/layout", { name, imageData });
       await reloadMap();
       toast(clearRegions ? `Layout "${name}" imported · previous regions cleared` : `Layout "${name}" imported`);
+      // Read the plot numbers straight off the freshly uploaded plan so the admin
+      // doesn't have to transcribe them. Opens a review screen with the results.
+      runDetect();
     } catch (err) {
       toast(err.message || "Couldn't save the layout", "error");
+    }
+  };
+
+  // Run the AI vision scan on the active layout and open the review modal. Errors
+  // (e.g. AI key not configured) surface as a toast and close the modal.
+  const runDetect = async () => {
+    setDetectResult(null);
+    setDetecting(true);
+    setDetectOpen(true);
+    try {
+      const { data } = await api.post("/admin/plot-map/detect", {});
+      setDetectResult(data);
+    } catch (err) {
+      setDetectOpen(false);
+      toast(err.message || "Couldn't detect plots from the image", "error");
+    } finally {
+      setDetecting(false);
     }
   };
   const onUploadLayout = (e) => {
@@ -176,6 +226,44 @@ export default function PlotMapWorkspace() {
     }
   };
 
+  // Download a CSV of every plot + owner (carried over from the old grid page).
+  const exportCSV = () => {
+    const cols = [
+      ["plotNo", "Plot No"],
+      ["ownerName", "Owner"],
+      ["phone", "Phone"],
+      ["email", "Email"],
+      ["sizeSqyd", "Size (sqyd)"],
+      ["phase", "Phase"],
+      ["status", "Status"],
+      ["amountDue", "Amount Due"],
+    ];
+    const header = cols.map((c) => csvEscape(c[1])).join(",");
+    const body = allPlots
+      .map((p) => cols.map((c) => csvEscape(c[0] === "status" ? STATUS[mapStatus(p)].label : p[c[0]])).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([`${header}\n${body}`], { type: "text/csv;charset=utf-8;" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "plotmate-plots.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`Exported ${allPlots.length} plots (CSV)`);
+  };
+
+  const downloadLayout = () => {
+    if (!layoutImg) return;
+    const a = document.createElement("a");
+    a.href = layoutImg;
+    a.download = "plotmate-layout.png";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast("Layout image downloaded");
+  };
+
   /* ------------------------------- editor ------------------------------- */
   const enterEdit = () => {
     setDraft(savedRegions.map((r) => ({ ...r, _key: `s${r.id ?? keyRef.current++}` })));
@@ -198,9 +286,15 @@ export default function PlotMapWorkspace() {
     return { points, x: bb.x, y: bb.y, w: bb.w, h: bb.h, _key: `d${keyRef.current++}`, ...extra };
   };
   const onShapeComplete = (points, which) => {
-    if (which === "label") setPendingLabel({ points });
-    else setAssign({ points });
-    setTool("select");
+    if (which === "label") {
+      setPendingLabel({ points });
+      setTool("select");
+    } else {
+      setAssign({ points });
+      // Keep the Pin tool armed so several plots can be dropped in a row; other
+      // tools fall back to select after one shape.
+      if (which !== "point") setTool("select");
+    }
   };
   const assignPlot = (plotId) => {
     if (assign?.points) {
@@ -293,8 +387,36 @@ export default function PlotMapWorkspace() {
     }
   };
 
+  // Approve (verify) a registered owner directly from the map. Membership flips
+  // to verified; the lifecycle status is unchanged (a registered plot stays
+  // booked). The map reads plots live, so the panel updates immediately.
+  const approvePlot = async (plot) => {
+    setApproving(true);
+    try {
+      await api.post(`/admin/plots/${plot.id}/approve`, {});
+      await reloadPlots();
+      setSelected((s) => (s ? { ...s, plot: { ...s.plot, membership: "verified" } } : s));
+      toast(`${plot.plotNo} approved · owner verified`);
+    } catch (err) {
+      toast(err.message || "Couldn't approve owner", "error");
+    } finally {
+      setApproving(false);
+    }
+  };
+
   const selPlot = selected?.plot || null;
   const selStatus = STATUS[mapStatus(selPlot)] || STATUS.available;
+
+  // When a plan is uploaded but nothing is mapped onto it yet, the Map lens is a
+  // dead canvas — registering an owner updates the plot but can't place it on the
+  // image without a region. So land on the Grid instead, where every registered
+  // owner is visible immediately. Stops as soon as regions exist or the admin
+  // explicitly picks a lens. (React "adjust state during render" — self-guarding,
+  // since setting view to "grid" makes the condition false on the next render.)
+  const mappedPlotCount = savedRegions.filter((r) => r.kind !== "label").length;
+  if (!viewPinned && view === "map" && layoutImg && allPlots.length > 0 && mappedPlotCount === 0) {
+    setView("grid");
+  }
 
   return (
     <div className={cn("animate-fade-in min-h-[80vh] rounded-3xl p-4 transition-colors sm:p-6", t.shell, t.text)}>
@@ -303,7 +425,7 @@ export default function PlotMapWorkspace() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Plot Map</h1>
           <p className={cn("mt-1 text-sm", t.sub)}>
-            Interactive site plan · {allPlots.length} plots · click a plot for owner &amp; payment details
+            {allPlots.length} plots · {view === "grid" ? "grouped by phase" : "interactive site plan"} · click a plot for owner &amp; payment details
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -312,8 +434,19 @@ export default function PlotMapWorkspace() {
           <Ctrl t={t} icon={dark ? "sun" : "moon"} onClick={() => setDark((d) => !d)}>
             {dark ? "Light" : "Dark"}
           </Ctrl>
+          <Ctrl t={t} icon="download" onClick={exportCSV}>
+            Export CSV
+          </Ctrl>
           <Ctrl t={t} icon="upload" onClick={() => fileRef.current?.click()}>
             {layoutImg ? "Replace layout" : "Import layout"}
+          </Ctrl>
+          {layoutImg && (
+            <Ctrl t={t} icon="scan-search" onClick={runDetect}>
+              Detect plots
+            </Ctrl>
+          )}
+          <Ctrl t={t} icon="grid-2x2-plus" onClick={() => setGenOpen(true)}>
+            Add plots
           </Ctrl>
           <Ctrl t={t} icon="file-code-2" onClick={() => svgRef.current?.click()}>
             Import SVG
@@ -331,6 +464,7 @@ export default function PlotMapWorkspace() {
 
       {/* Search + filters */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
+        <ViewToggle t={t} view={view} onChange={(v) => { setViewPinned(true); setView(v); }} disabled={mode === "edit"} />
         <div className="relative w-full max-w-sm">
           <Icon name="search" size={16} className={cn("pointer-events-none absolute left-3 top-1/2 -translate-y-1/2", t.sub)} />
           <input
@@ -371,24 +505,40 @@ export default function PlotMapWorkspace() {
         </select>
       </div>
 
-      {/* Canvas + controls */}
-      {!layoutImg ? (
-        <button
-          onClick={() => fileRef.current?.click()}
-          className={cn("flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-20", t.empty)}
-        >
-          <Icon name="image-up" size={44} />
-          <p className="mt-3 text-sm font-medium">Import your approved site plan</p>
-          <p className={cn("mt-1 max-w-md text-center text-xs", t.sub)}>
-            Upload the master plan (PNG / JPG), then use <b>Edit map</b> to draw polygons over each plot — or
-            import a vector SVG with <code>id=&quot;plot_101&quot;</code> shapes to place them automatically.
-          </p>
-          <span className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white">
-            <Icon name="upload" size={15} /> Choose image
-          </span>
-        </button>
-      ) : (
-        <>
+      {/* Workspace — map or grid on the left, the single-plot panel on the right */}
+      <div className="lg:flex lg:items-start lg:gap-4">
+        <div className="min-w-0 lg:flex-1">
+          {view === "grid" ? (
+            <>
+              <GridView
+                t={t}
+                dark={dark}
+                blocks={gridBlocks}
+                filter={filter}
+                phase={phase}
+                selectedId={selPlot?.id ?? null}
+                onSelect={(p) => setSelected({ plot: p, reg: regionByPlotId.get(p.id) })}
+                onHover={setHover}
+              />
+              <MapLegend t={t} mapped={savedRegions.filter((r) => r.kind !== "label").length} outstanding={outstanding} />
+            </>
+          ) : !layoutImg ? (
+            <button
+              onClick={() => fileRef.current?.click()}
+              className={cn("flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-20", t.empty)}
+            >
+              <Icon name="image-up" size={44} />
+              <p className="mt-3 text-sm font-medium">Import your approved site plan</p>
+              <p className={cn("mt-1 max-w-md text-center text-xs", t.sub)}>
+                Upload the master plan (PNG / JPG), then use <b>Edit map</b> to draw polygons over each plot — or
+                import a vector SVG with <code>id=&quot;plot_101&quot;</code> shapes to place them automatically.
+              </p>
+              <span className="mt-4 inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white">
+                <Icon name="upload" size={15} /> Choose image
+              </span>
+            </button>
+          ) : (
+            <>
           {/* Toolbar */}
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -413,7 +563,10 @@ export default function PlotMapWorkspace() {
               <Ctrl t={t} icon="zoom-out" onClick={() => canvasRef.current?.zoomBy(1 / 1.25)} square />
               <Ctrl t={t} icon="maximize" onClick={() => canvasRef.current?.fitView()}>Fit</Ctrl>
               {mode === "view" ? (
-                <Ctrl t={t} icon="trash-2" onClick={() => setConfirmRemove(true)} danger>Remove</Ctrl>
+                <>
+                  <Ctrl t={t} icon="image-down" onClick={downloadLayout}>Download</Ctrl>
+                  <Ctrl t={t} icon="trash-2" onClick={() => setConfirmRemove(true)} danger>Remove</Ctrl>
+                </>
               ) : (
                 <>
                   <Ctrl t={t} icon="x" onClick={cancelEdit}>Cancel</Ctrl>
@@ -423,35 +576,50 @@ export default function PlotMapWorkspace() {
             </div>
           </div>
 
-          <MapCanvas
-            ref={canvasRef}
-            src={layoutImg}
-            regions={viewRegions}
-            plotById={plotById}
-            mode={mode}
-            tool={tool}
-            showNumbers={showNumbers}
-            overlayOpacity={opacity}
-            selectedPlotId={mode === "view" ? selPlot?.id ?? null : null}
-            selDraftIdx={selDraftIdx}
-            onSelectDraft={setSelDraftIdx}
-            onPlotClick={(plot, reg) => setSelected({ plot, reg })}
-            onHover={setHover}
-            onShapeComplete={onShapeComplete}
-          />
+          <div className="relative">
+            <MapCanvas
+              ref={canvasRef}
+              src={layoutImg}
+              regions={viewRegions}
+              plotById={plotById}
+              mode={mode}
+              tool={tool}
+              showNumbers={showNumbers}
+              overlayOpacity={opacity}
+              selectedPlotId={mode === "view" ? selPlot?.id ?? null : null}
+              selDraftIdx={selDraftIdx}
+              onSelectDraft={setSelDraftIdx}
+              onPlotClick={(plot, reg) => setSelected({ plot, reg })}
+              onHover={setHover}
+              onShapeComplete={onShapeComplete}
+            />
+
+            {/* The plan is uploaded but no plots are mapped onto it yet, so the
+                shapes drawn into the image aren't clickable. Make that explicit
+                rather than leaving a dead-looking map. */}
+            {mode === "view" && savedRegions.filter((r) => r.kind !== "label").length === 0 && (
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center p-4">
+                <div className="pointer-events-auto max-w-sm rounded-2xl border border-white/15 bg-slate-900/85 p-5 text-center shadow-2xl backdrop-blur">
+                  <span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-brand-500/15 text-brand-300">
+                    <Icon name="map" size={22} />
+                  </span>
+                  <p className="mt-3 text-sm font-semibold text-white">No plots mapped on this plan yet</p>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-300">
+                    The shapes on the plan are part of the image — they aren&apos;t clickable until you map plots onto it.
+                    Draw them with <b>Edit map</b> or <b>Import SVG</b>, or switch to <b>Grid</b> to open any plot now.
+                  </p>
+                  <div className="mt-3.5 flex flex-wrap justify-center gap-2">
+                    <Button size="sm" icon="pencil" onClick={enterEdit}>Edit map</Button>
+                    <Button size="sm" variant="secondary" icon="grid-2x2" onClick={() => setView("grid")}>Grid view</Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Footer: legend (view) or edit status bar */}
           {mode === "view" ? (
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-              {STATUS_ORDER.map((k) => (
-                <span key={k} className={cn("inline-flex items-center gap-1.5 text-xs", t.sub)}>
-                  <span className="h-3 w-3 rounded" style={{ background: STATUS[k].color }} /> {STATUS[k].label}
-                </span>
-              ))}
-              <span className={cn("ml-auto text-xs", t.sub)}>
-                {savedRegions.filter((r) => r.kind !== "label").length} mapped · {outstanding > 0 ? `${formatINR(outstanding)} outstanding` : "all cleared"}
-              </span>
-            </div>
+            <MapLegend t={t} mapped={savedRegions.filter((r) => r.kind !== "label").length} outstanding={outstanding} />
           ) : (
             <EditBar
               t={t}
@@ -464,8 +632,26 @@ export default function PlotMapWorkspace() {
               onDelete={deleteDraft}
             />
           )}
-        </>
-      )}
+            </>
+          )}
+          </div>
+
+          {/* Persistent detail panel (lg+) — fed by the single selected plot */}
+          <aside className="mt-4 hidden lg:mt-0 lg:block lg:w-[360px] lg:shrink-0">
+            <DetailPanel
+              plot={selPlot}
+              status={selStatus}
+              mapped={!!selected?.reg}
+              savingStatus={savingStatus}
+              approving={approving}
+              onApprove={() => selPlot && approvePlot(selPlot)}
+              onSetStatus={(s) => selPlot && setPlotStatus(selPlot, s)}
+              onPayments={() => selPlot && setReceiptsFor({ plotNo: selPlot.plotNo, name: selPlot.ownerName })}
+              onReminder={() => selPlot && setReminderFor(selPlot)}
+              onClose={() => setSelected(null)}
+            />
+          </aside>
+        </div>
 
       {/* Hover glassmorphism card */}
       {hover?.plot && mode === "view" && <HoverCard hover={hover} />}
@@ -505,79 +691,45 @@ export default function PlotMapWorkspace() {
         confirmVariant="danger"
       />
 
-      {/* Details sidebar */}
-      <Drawer
-        open={!!selected}
-        onClose={() => setSelected(null)}
-        title={selPlot ? `Plot ${selPlot.plotNo}` : "Plot"}
-        subtitle={selPlot?.phase}
-        footer={
-          selPlot && (
-            <>
-              <Button variant="secondary" icon="receipt" onClick={() => setReceiptsFor({ plotNo: selPlot.plotNo, name: selPlot.ownerName })}>
-                View payments
-              </Button>
-              <Button icon="send" onClick={() => setReminderFor(selPlot)}>Send reminder</Button>
-            </>
-          )
-        }
-      >
-        {selPlot && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <Avatar name={selPlot.ownerName ?? "NA"} size={46} />
-              <div className="min-w-0">
-                <p className="font-semibold text-slate-800">{selPlot.ownerName ?? "Not registered"}</p>
-                <p className="text-sm text-slate-500">{selPlot.sizeSqyd ? `${selPlot.sizeSqyd} sqyd` : "—"}</p>
-              </div>
-              <span
-                className="ml-auto inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-                style={{ background: `${selStatus.color}22`, color: selStatus.color }}
-              >
-                <span className="h-2 w-2 rounded-full" style={{ background: selStatus.color }} /> {selStatus.label}
-              </span>
-            </div>
+      {/* Details — slide-over on mobile/tablet; the persistent side panel takes over on lg+ */}
+      <div className="lg:hidden">
+        <Drawer
+          open={!!selected}
+          onClose={() => setSelected(null)}
+          title={selPlot ? `Plot ${selPlot.plotNo}` : "Plot"}
+          subtitle={selPlot?.phase}
+        >
+          {selPlot && (
+            <PlotDetail
+              plot={selPlot}
+              status={selStatus}
+              mapped={!!selected?.reg}
+              savingStatus={savingStatus}
+              approving={approving}
+              onApprove={() => approvePlot(selPlot)}
+              onSetStatus={(s) => setPlotStatus(selPlot, s)}
+              onPayments={() => setReceiptsFor({ plotNo: selPlot.plotNo, name: selPlot.ownerName })}
+              onReminder={() => setReminderFor(selPlot)}
+            />
+          )}
+        </Drawer>
+      </div>
 
-            <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-4 text-sm">
-              <Detail label="Phone" value={selPlot.phone ?? "—"} />
-              <Detail label="Email" value={selPlot.email ?? "—"} className="truncate" />
-              <Detail label="Membership" value={selPlot.membership ?? "—"} className="capitalize" />
-              <Detail label="Days overdue" value={selPlot.daysOverdue > 0 ? `${selPlot.daysOverdue} days` : "—"} />
-              <Detail label="Balance" value={selPlot.amountDue > 0 ? formatINR(selPlot.amountDue) : "Cleared"} />
-              <Detail label="Mapped" value={selected?.reg ? "On layout" : "Not on layout"} />
-            </div>
+      <GeneratePlotsModal
+        open={genOpen}
+        existingPlotNos={existingPlotNos}
+        onClose={() => setGenOpen(false)}
+        onDone={reloadPlots}
+      />
 
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-slate-500">Set plot status</p>
-              <div className="flex flex-wrap gap-1.5">
-                {PLOT_STATUSES.map((s) => (
-                  <button
-                    key={s}
-                    disabled={savingStatus}
-                    onClick={() => setPlotStatus(selPlot, s)}
-                    className={cn(
-                      "rounded-lg border px-2.5 py-1 text-xs font-medium capitalize transition-colors disabled:opacity-50",
-                      selPlot.status === s ? "border-transparent text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50",
-                    )}
-                    style={selPlot.status === s ? { background: STATUS[s].color } : undefined}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <Link href="/admin/owners" className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50">
-                <Icon name="user" size={15} /> View owner
-              </Link>
-              <Link href="/admin/documents" className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50">
-                <Icon name="folder" size={15} /> Documents
-              </Link>
-            </div>
-          </div>
-        )}
-      </Drawer>
+      <DetectPlotsModal
+        open={detectOpen}
+        loading={detecting}
+        result={detectResult}
+        existingPlotNos={existingPlotNos}
+        onClose={() => setDetectOpen(false)}
+        onCreated={reloadPlots}
+      />
 
       {receiptsFor && <ReceiptsModal plotNo={receiptsFor.plotNo} ownerName={receiptsFor.name} onClose={() => setReceiptsFor(null)} />}
       <SendReminderModal
@@ -675,6 +827,7 @@ function FilterChips({ t, value, onChange, options }) {
 function ToolPicker({ t, tool, setTool }) {
   const tools = [
     { k: "select", icon: "mouse-pointer-2", label: "Select / pan" },
+    { k: "point", icon: "map-pin", label: "Pin plot" },
     { k: "polygon", icon: "pentagon", label: "Polygon" },
     { k: "rectangle", icon: "square", label: "Rectangle" },
     { k: "label", icon: "type", label: "Label" },
@@ -716,7 +869,7 @@ function EditBar({ t, count, labels, total, selected, plotById, onChangePlot, on
         </div>
       ) : (
         <span className={cn("text-xs", t.sub)}>
-          Pick a tool, then draw on the plan. Polygon: click each vertex, then click the first point (or press Enter) to finish. Click a shape to select it.
+          Pick a tool, then place plots on the plan. <b>Pin plot</b>: click where a plot sits and choose its number — quickest way to map registered owners. Polygon: click each vertex, then the first point (or Enter) to finish. Click a shape to select it.
         </span>
       )}
     </div>
@@ -766,6 +919,262 @@ function Detail({ label, value, className }) {
     <div>
       <p className="text-xs text-slate-400">{label}</p>
       <p className={cn("font-medium text-slate-700", className)}>{value}</p>
+    </div>
+  );
+}
+
+/* Map ⇄ Grid lens switch. Locked while editing the map so an in-progress draft
+   can't be lost by switching away. */
+function ViewToggle({ t, view, onChange, disabled }) {
+  const opts = [
+    { k: "map", label: "Map", icon: "map" },
+    { k: "grid", label: "Grid", icon: "grid-2x2" },
+  ];
+  return (
+    <div className={cn("inline-flex gap-1 rounded-xl border p-1", t.chip, disabled && "opacity-50")}>
+      {opts.map((o) => (
+        <button
+          key={o.k}
+          disabled={disabled}
+          onClick={() => onChange(o.k)}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed",
+            view === o.k ? "bg-brand-600 text-white" : "opacity-80 hover:opacity-100",
+          )}
+        >
+          <Icon name={o.icon} size={13} /> {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* Grid lens — uniform tiles grouped into per-phase blocks, coloured by the same
+   status model the map uses. Works with or without an uploaded layout. Selecting
+   a tile feeds the very same single-plot panel as the map. */
+function GridView({ t, dark, blocks, filter, phase, selectedId, onSelect, onHover }) {
+  const dim = (p) =>
+    (filter !== "all" && mapStatus(p) !== filter) || (phase !== "all" && p.phase !== phase);
+  return (
+    <div className={cn("rounded-2xl border p-4 shadow-sm sm:p-5", t.card)}>
+      {blocks.length === 0 ? (
+        <p className={cn("py-10 text-center text-sm", t.sub)}>No plots yet — add owners to populate the grid.</p>
+      ) : (
+        <div className="space-y-6">
+          {blocks.map(({ phase: ph, lots }) => (
+            <div key={ph}>
+              <div className="mb-2.5 flex items-center gap-2 border-b border-slate-400/15 pb-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide">{ph}</span>
+                <span className={cn("text-[11px]", t.sub)}>{lots.length} plot{lots.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                {lots.map((p) => {
+                  const st = STATUS[mapStatus(p)] || STATUS.available;
+                  const faded = dim(p);
+                  const sel = p.id === selectedId;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => onSelect(p)}
+                      onMouseEnter={(e) => onHover({ plot: p, reg: null, x: e.clientX, y: e.clientY })}
+                      onMouseMove={(e) => onHover({ plot: p, reg: null, x: e.clientX, y: e.clientY })}
+                      onMouseLeave={() => onHover(null)}
+                      title={`${p.plotNo} · ${p.ownerName || "Unregistered"}`}
+                      className={cn(
+                        "grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[10px] font-bold text-white transition-all hover:z-10 hover:scale-110",
+                        faded && "opacity-20 hover:opacity-50",
+                      )}
+                      style={{
+                        background: st.color,
+                        boxShadow: sel
+                          ? `0 0 0 2px ${dark ? "#020617" : "#fff"}, 0 0 0 4px ${st.color}`
+                          : undefined,
+                      }}
+                    >
+                      {(p.plotNo || "").replace(/^P-?/i, "")}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MapLegend({ t, mapped, outstanding }) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+      {STATUS_ORDER.map((k) => (
+        <span key={k} className={cn("inline-flex items-center gap-1.5 text-xs", t.sub)}>
+          <span className="h-3 w-3 rounded" style={{ background: STATUS[k].color }} /> {STATUS[k].label}
+        </span>
+      ))}
+      <span className={cn("ml-auto text-xs", t.sub)}>
+        {mapped} mapped · {outstanding > 0 ? `${formatINR(outstanding)} outstanding` : "all cleared"}
+      </span>
+    </div>
+  );
+}
+
+/* Persistent right-hand detail panel (lg+). A bright, elevated card that floats
+   over the dark map and shows ONLY the selected plot — or an invitation to pick
+   one. Reuses PlotDetail so it can never diverge from the mobile drawer. */
+function DetailPanel({ plot, status, mapped, savingStatus, approving, onApprove, onSetStatus, onPayments, onReminder, onClose }) {
+  return (
+    <div className="sticky top-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-900/5">
+      {plot ? (
+        <div className="animate-fade-in">
+          <div
+            className="flex items-center justify-between gap-2 border-b border-slate-100 px-5 py-3.5"
+            style={{ background: `linear-gradient(135deg, ${status.soft}, transparent 70%)` }}
+          >
+            <div className="min-w-0">
+              <p className="truncate text-base font-semibold text-slate-800">Plot {plot.plotNo}</p>
+              <p className="truncate text-xs text-slate-500">{plot.phase ?? "—"}</p>
+            </div>
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+            >
+              <Icon name="x" size={18} />
+            </button>
+          </div>
+          <div className="max-h-[calc(72vh-3.5rem)] overflow-y-auto px-5 py-4">
+            <PlotDetail
+              plot={plot}
+              status={status}
+              mapped={mapped}
+              savingStatus={savingStatus}
+              approving={approving}
+              onApprove={onApprove}
+              onSetStatus={onSetStatus}
+              onPayments={onPayments}
+              onReminder={onReminder}
+            />
+          </div>
+        </div>
+      ) : (
+        <EmptyPanel />
+      )}
+    </div>
+  );
+}
+
+function EmptyPanel() {
+  return (
+    <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
+      <span className="grid h-12 w-12 place-items-center rounded-full bg-slate-100 text-slate-400">
+        <Icon name="mouse-pointer-2" size={22} />
+      </span>
+      <p className="mt-3 text-sm font-medium text-slate-700">Select a plot</p>
+      <p className="mt-1 max-w-[16rem] text-xs text-slate-400">
+        Click any plot on the map to see its owner, balance and payment details here — just that plot, nothing else.
+      </p>
+    </div>
+  );
+}
+
+/* The single-owner detail body — shared by the lg+ side panel and the mobile
+   drawer. Renders exactly one plot's owner; never the full list. */
+function PlotDetail({ plot, status, mapped, savingStatus, approving, onApprove, onSetStatus, onPayments, onReminder }) {
+  const due = plot.amountDue > 0;
+  const registered = !!plot.ownerName;
+  const pendingApproval = registered && plot.membership !== "verified";
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Avatar name={plot.ownerName ?? "NA"} size={46} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold text-slate-800">{plot.ownerName ?? "Not registered"}</p>
+          <p className="truncate text-sm text-slate-500">{plot.sizeSqyd ? `${plot.sizeSqyd} sqyd` : "—"}</p>
+        </div>
+        <span
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+          style={{ background: `${status.color}22`, color: status.color }}
+        >
+          <span className="h-2 w-2 rounded-full" style={{ background: status.color }} /> {status.label}
+        </span>
+      </div>
+
+      {/* Registered-but-unverified: surface the pending approval + a one-click
+          Approve so the owner can be verified straight from the map. */}
+      {pendingApproval && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700">
+            <Icon name="clock" size={13} /> Registered · pending approval
+          </p>
+          <button
+            disabled={approving}
+            onClick={onApprove}
+            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
+          >
+            <Icon name="badge-check" size={15} /> {approving ? "Approving…" : "Approve owner"}
+          </button>
+        </div>
+      )}
+      {registered && !pendingApproval && (
+        <p className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-600">
+          <Icon name="badge-check" size={13} /> Owner verified
+        </p>
+      )}
+
+      {/* Balance hero — the number admins reach for first */}
+      <div className={cn("rounded-xl border p-4", due ? "border-rose-200 bg-rose-50" : "border-brand-200 bg-brand-50")}>
+        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Outstanding balance</p>
+        <p className={cn("mt-1 text-2xl font-semibold tracking-tight", due ? "text-rose-600" : "text-brand-700")}>
+          {due ? formatINR(plot.amountDue) : "All cleared"}
+        </p>
+        {plot.daysOverdue > 0 && (
+          <p className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-rose-600">
+            <Icon name="clock" size={12} /> {plot.daysOverdue} days overdue
+          </p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-4 text-sm">
+        <Detail label="Phone" value={plot.phone ?? "—"} />
+        <Detail label="Email" value={plot.email ?? "—"} className="truncate" />
+        <Detail label="Membership" value={plot.membership ?? "—"} className="capitalize" />
+        <Detail label="Mapped" value={mapped ? "On layout" : "Not on layout"} />
+      </div>
+
+      <div>
+        <p className="mb-1.5 text-xs font-medium text-slate-500">Set plot status</p>
+        <div className="flex flex-wrap gap-1.5">
+          {PLOT_STATUSES.map((s) => (
+            <button
+              key={s}
+              disabled={savingStatus}
+              onClick={() => onSetStatus(s)}
+              className={cn(
+                "rounded-lg border px-2.5 py-1 text-xs font-medium capitalize transition-colors disabled:opacity-50",
+                plot.status === s ? "border-transparent text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50",
+              )}
+              style={plot.status === s ? { background: STATUS[s].color } : undefined}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Link href="/admin/owners" className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50">
+          <Icon name="user" size={15} /> View owner
+        </Link>
+        <Link href="/admin/documents" className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50">
+          <Icon name="folder" size={15} /> Documents
+        </Link>
+      </div>
+
+      <div className="flex flex-col gap-2 pt-1">
+        <Button variant="secondary" icon="receipt" onClick={onPayments}>View payments</Button>
+        <Button icon="send" onClick={onReminder}>Send reminder</Button>
+      </div>
     </div>
   );
 }

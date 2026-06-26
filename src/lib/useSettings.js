@@ -35,6 +35,7 @@ const FALLBACK = {
   bank: { accountName: "", accountNo: "", ifsc: "", bank: "", upi: "" },
   committee: [],
   helplines: [],
+  lists: {},
 };
 
 export function useSettings() {
@@ -48,6 +49,7 @@ export function useSettings() {
       bank: { ...FALLBACK.bank, ...(s.bank ?? {}) },
       committee: Array.isArray(s.committee) ? s.committee : [],
       helplines: Array.isArray(s.helplines) ? s.helplines : [],
+      lists: s.lists ?? {},
     },
     loading,
   };

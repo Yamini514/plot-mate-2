@@ -328,14 +328,14 @@ function MemberPaySection({ inv, upiUri, onPaid }) {
     if (amt <= 0) return toast("Enter a valid amount", "error");
     setSaving(true);
     try {
-      const { data } = await api.post("/member/billing/pay", {
+      await api.post("/member/billing/pay", {
         invoiceId: inv.dbId,
         amount: amt,
         mode: "upi",
         reference,
       });
-      setDone(data?.receiptNumber || "recorded");
-      toast(`Payment confirmed${data?.receiptNumber ? ` · ${data.receiptNumber}` : ""}`);
+      setDone("submitted");
+      toast("Payment submitted — the association will verify it shortly");
       onPaid?.();
     } catch (e) {
       toast(e.message || "Could not confirm payment", "error");
@@ -346,10 +346,10 @@ function MemberPaySection({ inv, upiUri, onPaid }) {
 
   if (done) {
     return (
-      <div className="rounded-xl bg-brand-50 p-4 text-center text-sm">
-        <Icon name="check-circle-2" size={22} className="mx-auto text-brand-600" />
-        <p className="mt-1 font-semibold text-brand-800">Thank you — payment confirmed</p>
-        {done !== "recorded" && <p className="text-brand-700">Receipt {done}</p>}
+      <div className="rounded-xl bg-amber-50 p-4 text-center text-sm">
+        <Icon name="clock" size={22} className="mx-auto text-amber-600" />
+        <p className="mt-1 font-semibold text-amber-800">Submitted for verification</p>
+        <p className="text-amber-700">The association will verify your payment and issue a receipt. Your balance updates once it&apos;s confirmed.</p>
       </div>
     );
   }

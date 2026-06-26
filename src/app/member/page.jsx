@@ -98,6 +98,23 @@ export default function MemberHome() {
         }
       />
 
+      {/* Quick alerts — dynamic counts across the owner's modules */}
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {[
+          { label: "Outstanding dues", value: formatINR(totalDue), href: "/member/billing", icon: "wallet", on: totalDue > 0, cls: "bg-amber-50 text-amber-600" },
+          { label: "Active complaints", value: billing?.alerts?.activeComplaints ?? 0, href: "/member/complaints", icon: "message-square-warning", on: (billing?.alerts?.activeComplaints ?? 0) > 0, cls: "bg-rose-50 text-rose-600" },
+          { label: "Pending requests", value: billing?.alerts?.pendingRequests ?? 0, href: "/member/requests", icon: "clipboard-list", on: (billing?.alerts?.pendingRequests ?? 0) > 0, cls: "bg-sky-50 text-sky-600" },
+          { label: "Expiring docs", value: billing?.alerts?.expiringDocuments ?? 0, href: "/member/documents", icon: "folder", on: (billing?.alerts?.expiringDocuments ?? 0) > 0, cls: "bg-amber-50 text-amber-600" },
+          { label: "Notifications", value: billing?.alerts?.unreadNotifications ?? 0, href: "/member/notifications", icon: "bell", on: (billing?.alerts?.unreadNotifications ?? 0) > 0, cls: "bg-brand-50 text-brand-600" },
+        ].map((a) => (
+          <Link key={a.label} href={a.href} className="rounded-xl border border-slate-200 bg-white p-3 transition-colors hover:border-brand-300 hover:bg-brand-50/40">
+            <span className={`grid h-8 w-8 place-items-center rounded-lg ${a.on ? a.cls : "bg-slate-100 text-slate-500"}`}><Icon name={a.icon} size={15} /></span>
+            <p className="mt-2 text-lg font-bold text-slate-800">{a.value}</p>
+            <p className="text-[11px] text-slate-400">{a.label}</p>
+          </Link>
+        ))}
+      </div>
+
       {/* Owner hero */}
       <Card className="overflow-hidden">
         <div className="relative bg-brand-700 p-6 text-white">

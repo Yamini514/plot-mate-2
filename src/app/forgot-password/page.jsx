@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { password as validatePassword } from "@/lib/validate";
 import { Icon } from "@/components/Icon";
 import { cn } from "@/lib/utils";
 
@@ -104,8 +105,8 @@ export default function ForgotPasswordPage() {
   const reset = async (e) => {
     e?.preventDefault();
     setError("");
-    if (password.length < 8)
-      return setError("Use at least 8 characters for your new password.");
+    const pwError = validatePassword(password);
+    if (pwError) return setError(pwError);
     if (password !== confirm) return setError("The two passwords don’t match.");
 
     setLoading(true);

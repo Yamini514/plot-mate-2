@@ -178,6 +178,21 @@ export function InvoicesPanel() {
     }
   };
 
+  // Accrue one month of interest on overdue invoices (rate from Settings).
+  const [interestSaving, setInterestSaving] = useState(false);
+  const applyInterest = async () => {
+    setInterestSaving(true);
+    try {
+      const { data } = await api.post("/admin/billing/invoices/apply-interest");
+      toast(`Interest (${data.ratePercent}%/mo) accrued on ${data.applied} invoice(s)`);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not apply interest", "error");
+    } finally {
+      setInterestSaving(false);
+    }
+  };
+
   // Generate invoices: one per active plot for the chosen plan + period.
   // The backend skips plots already invoiced for that plan+period, so re-running
   // only bills newly added owners — no duplicates for existing ones.
@@ -261,6 +276,7 @@ export function InvoicesPanel() {
         actions={
           <>
             <Button variant="secondary" icon="alarm-clock" loading={lateFeeSaving} onClick={applyLateFees}>Apply late fees</Button>
+            <Button variant="secondary" icon="percent" loading={interestSaving} onClick={applyInterest}>Apply interest</Button>
             <Button variant="secondary" icon="download" onClick={exportCSV}>Export</Button>
             <Button variant="secondary" icon="user-plus" onClick={() => setChargeOpen(true)}>Charge owner</Button>
             <Button icon="file-plus" onClick={() => setGenOpen(true)}>Generate invoices</Button>

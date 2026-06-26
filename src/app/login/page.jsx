@@ -114,7 +114,11 @@ export default function LoginPage() {
             Welcome back
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Sign in to your association dashboard.
+            Sign in to your association dashboard, or{" "}
+            <Link href="/register" className="font-medium text-brand-700 hover:underline">
+              register your venture
+            </Link>
+            .
           </p>
 
           <form onSubmit={submit} className="mt-8 space-y-4">

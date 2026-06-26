@@ -16,6 +16,9 @@ import {
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { api, normalizeList } from "@/lib/api";
+import { password as validatePassword } from "@/lib/validate";
+import { ContactListsCard } from "./ContactListsCard";
+import { AvatarUpload } from "@/components/AvatarUpload";
 import { useApi } from "@/lib/useApi";
 import { useAuth } from "@/lib/auth";
 import { useSettings } from "@/lib/useSettings";
@@ -89,8 +92,9 @@ export default function MemberProfile() {
       toast("Enter your current password", "error");
       return;
     }
-    if (pw.next.length < 8) {
-      toast("New password must be at least 8 characters", "error");
+    const pwError = validatePassword(pw.next);
+    if (pwError) {
+      toast(pwError, "error");
       return;
     }
     if (pw.next !== pw.confirm) {
@@ -161,6 +165,20 @@ export default function MemberProfile() {
           {/* Contact details (editable) */}
           <Card>
             <CardHeader title="Contact details" subtitle="Your name and phone — visible to the association office" icon="user-round-cog" />
+            <div className="px-5 pt-5">
+              <AvatarUpload
+                value={me?.avatarUrl ?? user?.avatarUrl}
+                name={form.fullName}
+                onChange={async (url) => {
+                  try {
+                    await api.put("/me/profile", { avatarUrl: url });
+                    updateUser({ avatarUrl: url });
+                    reloadMe();
+                    toast("Photo updated");
+                  } catch (e) { toast(e.message || "Could not update photo", "error"); }
+                }}
+              />
+            </div>
             <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
               <Field label="Full name">
                 <input
@@ -202,6 +220,9 @@ export default function MemberProfile() {
               </Button>
             </div>
           </Card>
+
+          {/* Family members, emergency contacts & nominees */}
+          <ContactListsCard me={me} onSaved={reloadMe} />
 
           {/* My property */}
           <Card>
@@ -253,7 +274,7 @@ export default function MemberProfile() {
                   placeholder="••••••••"
                 />
               </Field>
-              <Field label="New password" hint="At least 8 characters">
+              <Field label="New password" hint="8+ chars with upper, lower, number & special character">
                 <input
                   type={show ? "text" : "password"}
                   className={inputClass}

@@ -28,15 +28,19 @@ import { SendReminderModal } from "@/components/SendReminderModal";
 import { PaymentSlipModal } from "@/components/PaymentSlip";
 import { useSettings } from "@/lib/useSettings";
 import { OwnersImportModal } from "./OwnersImportModal";
+import { PlotOwnersSection } from "./PlotOwnersSection";
+import { GeneratePlotsModal } from "@/components/GeneratePlotsModal";
 import { AvatarUpload } from "@/components/AvatarUpload";
-import { formatINR, formatDate, validateAccount, validatePhone, digitsOnly, downloadCSV } from "@/lib/utils";
+import { formatINR, formatDate, validateAccount, validatePhone, digitsOnly, downloadCSV, cn } from "@/lib/utils";
 
 // ₹ per sq.yd used for the optional maintenance-due preview (matches the
 // backend Plot model rate).
 const RATE_PER_SQYD = 30;
 
+// Registration assigns an owner to an existing (unowned) plot picked from the
+// map/registry — `plot` holds that selected plot, never a free-typed number.
 const emptyForm = {
-  plotNo: "", sizeSqyd: "", name: "", phone: "", email: "", phase: "Phase 1",
+  plot: null, sizeSqyd: "", name: "", phone: "", email: "", phase: "Phase 1",
   applyDues: false,
   createLogin: false, password: "", confirmPassword: "", avatarUrl: "",
 };
@@ -47,14 +51,34 @@ export default function OwnersPage() {
   // Live data from the backend (admin sees every plot in the association).
   const { data: plots, reload } = useApi("/admin/plots", { page_size: 300 });
   const { data: stats } = useApi("/admin/plots/summary");
+  // The uploaded site plan + its regions — lets the picker flag which plots are
+  // already drawn on the map ("on map") vs. not ("not mapped").
+  const { data: mapData } = useApi("/admin/plot-map");
   // Backend exposes owner_name -> ownerName; the table uses `name`.
   const allOwners = (plots ?? []).map((p) => ({ ...p, name: p.ownerName }));
+
+  // Plot ids that have a clickable region on the layout.
+  const mappedIds = useMemo(
+    () =>
+      new Set(
+        (mapData?.regions ?? [])
+          .filter((r) => r.kind !== "label" && r.plotId != null)
+          .map((r) => r.plotId),
+      ),
+    [mapData],
+  );
+  // Unowned plots only — the registry/map plots still available to register.
+  const unownedPlots = useMemo(
+    () => allOwners.filter((o) => !o.name).sort((a, b) => (a.plotNo || "").localeCompare(b.plotNo || "", undefined, { numeric: true })),
+    [allOwners],
+  );
 
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [genOpen, setGenOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [receiptsFor, setReceiptsFor] = useState(null); // { plotNo, name }
@@ -65,6 +89,7 @@ export default function OwnersPage() {
   const [editForm, setEditForm] = useState(null); // editable plot fields
   const [savingEdit, setSavingEdit] = useState(false);
   const [applyingOne, setApplyingOne] = useState(false); // individual apply base pay
+  const [approving, setApproving] = useState(false); // verifying a registered owner
   const [applyOpen, setApplyOpen] = useState(false); // bulk apply dialog
   const [applyStatus, setApplyStatus] = useState("pending"); // which plots the bulk run targets
   const [applying, setApplying] = useState(false);
@@ -86,8 +111,12 @@ export default function OwnersPage() {
   );
 
   const saveOwner = async () => {
-    if (!form.plotNo.trim()) {
-      toast("Plot number is required", "error");
+    if (!form.plot) {
+      toast("Select a plot number from the map first", "error");
+      return;
+    }
+    if (!form.name.trim()) {
+      toast("Owner name is required", "error");
       return;
     }
     // Validate optional contact details if provided, so a typo is caught here
@@ -109,42 +138,61 @@ export default function OwnersPage() {
       const err = validateAccount({ email: form.email, password: form.password, confirm: form.confirmPassword });
       if (err) { toast(err, "error"); return; }
     }
+    const plotNo = form.plot.plotNo;
     setSaving(true);
     try {
-      // 1) Create the plot record in the registry.
-      await api.post("/admin/plots", {
-        plotNo: form.plotNo.trim(),
-        ownerName: form.name.trim() || null,
+      // 1) Register the owner against the existing (unowned) plot. This marks it
+      //    booked + unverified, pending the admin's approval — it never creates a
+      //    new plot number (those come from the imported map / registry).
+      const { data: plot } = await api.post(`/admin/plots/${form.plot.id}/register-owner`, {
+        ownerName: form.name.trim(),
         phone: form.phone.trim() || null,
         email: form.email.trim() || null,
-        sizeSqyd: Number(form.sizeSqyd) || 0,
+        sizeSqyd: Number(form.sizeSqyd) || form.plot.sizeSqyd || 0,
         phase: form.phase,
-        paymentStatus: "pending",
-        // Dues are only billed when the admin opts in — otherwise the plot
-        // starts with a zero balance.
-        applyDues: form.applyDues,
       });
-      // 2) Optionally create a secure member login linked to this plot.
+      // 2) Optionally (re)generate this plot's base pay at the current rate.
+      if (form.applyDues) {
+        await api.put(`/admin/plots/${plot.id}`, { applyDues: true });
+      }
+      // 3) Optionally create a secure member login linked to this plot.
       if (form.createLogin) {
         await api.post("/admin/users", {
-          fullName: form.name.trim() || `Owner ${form.plotNo.trim()}`,
+          fullName: form.name.trim() || `Owner ${plotNo}`,
           email: form.email.trim().toLowerCase(),
           password: form.password,
           role: 0, // member
           phoneNumber: form.phone.trim() || null,
           active: true,
           avatarUrl: form.avatarUrl || null,
-          extras: { plot_no: form.plotNo.trim(), title: "Plot Owner" },
+          extras: { plot_no: plotNo, title: "Plot Owner" },
         });
       }
-      toast(form.createLogin ? `Plot ${form.plotNo.trim()} added with member login` : `Plot ${form.plotNo.trim()} added`);
+      toast(form.createLogin ? `${plotNo} registered with member login · pending approval` : `${plotNo} registered · pending approval`);
       setForm(emptyForm);
       setAddOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not add owner", "error");
+      toast(e.message || "Could not register owner", "error");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Approve (verify) a registered owner — the explicit admin step that flips
+  // membership to verified. The plot stays "booked"; only verification changes.
+  const approveOwner = async () => {
+    if (!selected) return;
+    setApproving(true);
+    try {
+      const { data } = await api.post(`/admin/plots/${selected.id}/approve`, {});
+      setSelected({ ...selected, ...data, name: data.ownerName });
+      toast(`${selected.plotNo} approved · owner verified`);
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not approve owner", "error");
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -331,6 +379,9 @@ export default function OwnersPage() {
             <Button variant="secondary" icon="calculator" size="md" onClick={() => setApplyOpen(true)}>
               Apply base pay
             </Button>
+            <Button variant="secondary" icon="grid-2x2-plus" size="md" onClick={() => setGenOpen(true)}>
+              Add plots
+            </Button>
             <Button variant="secondary" icon="upload" size="md" onClick={() => setImportOpen(true)}>
               Import
             </Button>
@@ -350,7 +401,7 @@ export default function OwnersPage() {
             }}>
               Export
             </Button>
-            <Button icon="user-plus" onClick={() => setAddOpen(true)}>
+            <Button icon="user-plus" onClick={() => { setForm(emptyForm); setAddOpen(true); }}>
               Add owner
             </Button>
           </>
@@ -468,6 +519,9 @@ export default function OwnersPage() {
           ) : (
             <>
               <Button variant="ghost" icon="pencil" onClick={startEdit}>Edit</Button>
+              {selected.name && selected.membership !== "verified" && (
+                <Button variant="secondary" icon="badge-check" loading={approving} onClick={approveOwner}>Approve owner</Button>
+              )}
               <Button variant="secondary" icon="calculator" loading={applyingOne} onClick={applyBasePayOne}>Apply base pay</Button>
               <Button variant="secondary" icon="receipt-indian-rupee" onClick={() => setBillFor(selected)}>Generate bill</Button>
               <Button icon="send" onClick={() => setRemindFor(selected)}>Send reminder</Button>
@@ -492,6 +546,13 @@ export default function OwnersPage() {
                 <StatusBadge status={selected.membership} />
               </div>
             </div>
+
+            {selected.name && selected.membership !== "verified" && (
+              <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                <Icon name="clock" size={15} className="shrink-0" />
+                <span>Registered, pending approval. Approve to verify this owner on the plot map.</span>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4 rounded-xl bg-slate-50 p-4 text-sm">
               <Detail label="Phone" value={selected.phone ?? "—"} />
@@ -525,6 +586,8 @@ export default function OwnersPage() {
             >
               <Icon name="receipt" size={14} /> View payment receipts
             </button>
+
+            <PlotOwnersSection plotId={selected.id} />
           </div>
         )}
 
@@ -572,22 +635,61 @@ export default function OwnersPage() {
       <Modal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title="Add plot owner"
+        title="Register plot owner"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setAddOpen(false)}>
+            <Button variant="secondary" onClick={() => { setAddOpen(false); setForm(emptyForm); }}>
               Cancel
             </Button>
-            <Button onClick={saveOwner} loading={saving}>Save owner</Button>
+            <Button onClick={saveOwner} loading={saving}>Register owner</Button>
           </>
         }
       >
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Plot number">
-            <input className={inputClass} placeholder="P-281" value={form.plotNo} onChange={(e) => setForm({ ...form, plotNo: e.target.value })} />
-          </Field>
+          <div className="col-span-2">
+            <Field label="Plot number">
+              <PlotPicker
+                plots={unownedPlots}
+                mappedIds={mappedIds}
+                value={form.plot}
+                onChange={(p) =>
+                  setForm({
+                    ...form,
+                    plot: p,
+                    // Seed size/phase from the chosen plot; both stay editable.
+                    sizeSqyd: p?.sizeSqyd ?? "",
+                    phase: p?.phase || "Phase 1",
+                  })
+                }
+              />
+            </Field>
+            <p className="mt-1 text-xs text-slate-400">
+              {unownedPlots.length > 0 ? (
+                <>{unownedPlots.length} unowned plot{unownedPlots.length === 1 ? "" : "s"} available</>
+              ) : (
+                <>
+                  No unowned plots yet —{" "}
+                  <button
+                    type="button"
+                    className="font-medium text-brand-600 hover:underline"
+                    onClick={() => { setAddOpen(false); setGenOpen(true); }}
+                  >
+                    add plots from your map
+                  </button>{" "}
+                  first.
+                </>
+              )}
+            </p>
+          </div>
           <Field label="Size (sqyd)">
             <input type="number" className={inputClass} placeholder="200" value={form.sizeSqyd} onChange={(e) => setForm({ ...form, sizeSqyd: e.target.value })} />
+          </Field>
+          <Field label="Phase">
+            <select className={inputClass} value={form.phase} onChange={(e) => setForm({ ...form, phase: e.target.value })}>
+              <option>Phase 1</option>
+              <option>Phase 2</option>
+              <option>Phase 3</option>
+            </select>
           </Field>
           <Field label="Owner name">
             <input className={inputClass} placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -597,13 +699,6 @@ export default function OwnersPage() {
           </Field>
           <Field label="Email">
             <input className={inputClass} placeholder="name@example.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          </Field>
-          <Field label="Phase">
-            <select className={inputClass} value={form.phase} onChange={(e) => setForm({ ...form, phase: e.target.value })}>
-              <option>Phase 1</option>
-              <option>Phase 2</option>
-              <option>Phase 3</option>
-            </select>
           </Field>
         </div>
         {/* Base pay (optional) */}
@@ -693,6 +788,13 @@ export default function OwnersPage() {
         />
       )}
 
+      <GeneratePlotsModal
+        open={genOpen}
+        existingPlotNos={existingPlotNos}
+        onClose={() => setGenOpen(false)}
+        onDone={reload}
+      />
+
       {/* Bulk apply base pay */}
       <Modal
         open={applyOpen}
@@ -744,6 +846,94 @@ function Detail({ label, value }) {
     <div>
       <p className="text-xs text-slate-400">{label}</p>
       <p className="font-medium text-slate-700">{value}</p>
+    </div>
+  );
+}
+
+// Searchable selector of the plots still available to register (unowned). The
+// list is sourced from the imported map / registry — admins never type a free
+// plot number here, so an owner can only ever be registered against a plot that
+// actually exists on the plan. Each row flags whether it's drawn on the map yet.
+function PlotPicker({ plots, mappedIds, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const term = q.trim().toLowerCase();
+  const list = useMemo(
+    () =>
+      plots
+        .filter(
+          (p) =>
+            !term ||
+            p.plotNo?.toLowerCase().includes(term) ||
+            p.phase?.toLowerCase().includes(term),
+        )
+        .slice(0, 50),
+    [plots, term],
+  );
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={cn(inputClass, "flex items-center justify-between text-left")}
+      >
+        {value ? (
+          <span className="flex items-center gap-2">
+            <span className="font-medium text-slate-800">{value.plotNo}</span>
+            <span className="text-xs text-slate-400">{value.phase ?? "—"} · {value.sizeSqyd ?? "?"} sqyd</span>
+          </span>
+        ) : (
+          <span className="text-slate-400">{plots.length ? "Search & select a plot…" : "No unowned plots available"}</span>
+        )}
+        <Icon name="chevron-down" size={16} className="text-slate-400" />
+      </button>
+
+      {open && (
+        <>
+          {/* click-away */}
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div className="absolute z-30 mt-1 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center gap-2 border-b border-slate-100 px-3">
+              <Icon name="search" size={14} className="text-slate-400" />
+              <input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search plot no. or phase…"
+                className="h-10 w-full bg-transparent text-sm focus:outline-none"
+              />
+            </div>
+            <div className="max-h-60 overflow-auto p-1">
+              {list.length === 0 ? (
+                <p className="px-3 py-6 text-center text-sm text-slate-400">
+                  {plots.length ? `No unowned plots match “${q}”.` : "All plots are already registered."}
+                </p>
+              ) : (
+                list.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => { onChange(p); setOpen(false); setQ(""); }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-brand-50/60"
+                  >
+                    <span className="text-sm font-medium text-slate-700">{p.plotNo}</span>
+                    <span className="text-xs text-slate-400">{p.phase ?? "—"} · {p.sizeSqyd ?? "?"} sqyd</span>
+                    <span
+                      className={cn(
+                        "ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                        mappedIds.has(p.id) ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600",
+                      )}
+                    >
+                      {mappedIds.has(p.id) ? "on map" : "not mapped"}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

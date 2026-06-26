@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import {
-  PageHeader, Card, Button, Badge, Segmented, Table, Th, Td, Tr, Drawer, Field, inputClass,
+  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, Drawer, Field, inputClass, Pagination,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
-import { useApi } from "@/lib/useApi";
+import { useApi, useDebounced } from "@/lib/useApi";
+import { useListControls } from "@/lib/useList";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
 
@@ -20,9 +21,16 @@ const STATUS_OPTS = ["open", "assigned", "in_progress", "waiting_venture", "reso
 export default function PlatformTicketsPage() {
   const toast = useToast();
   const [filter, setFilter] = useState("all");
-  const { data: raw, meta, reload, loading } = useApi("/super/tickets", { status: filter });
+  const [priority, setPriority] = useState("");
+  const [search, setSearch] = useState("");
+  const c = useListControls();
+  const q = useDebounced(search);
+  const { data: raw, meta, reload, loading } = useApi("/super/tickets", {
+    status: filter, priority, search: q, ...c.query,
+  });
   const tickets = normalizeList(raw);
   const counts = meta?.counts ?? {};
+  const totalPages = meta?.totalPages ?? 1;
 
   const [openId, setOpenId] = useState(null);
   const [reply, setReply] = useState("");
@@ -57,10 +65,10 @@ export default function PlatformTicketsPage() {
       <PageHeader title="Support tickets" subtitle="Venture ↔ platform support, triage and escalation" />
 
       <Card>
-        <div className="border-b border-slate-100 p-4">
+        <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
           <Segmented
             value={filter}
-            onChange={setFilter}
+            onChange={(v) => { setFilter(v); c.setPage(1); }}
             options={[
               { value: "all", label: "All", count: counts.all },
               { value: "open", label: "Open", count: counts.open },
@@ -69,15 +77,33 @@ export default function PlatformTicketsPage() {
               { value: "resolved", label: "Resolved", count: counts.resolved },
             ]}
           />
+          <div className="flex gap-2">
+            <select className={`${inputClass} w-36`} value={priority} onChange={(e) => { setPriority(e.target.value); c.setPage(1); }}>
+              <option value="">All priorities</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+            <div className="relative">
+              <Icon name="search" size={15} className="absolute left-2.5 top-2.5 text-slate-400" />
+              <input
+                className="w-full rounded-lg border border-slate-200 py-2 pl-8 pr-3 text-sm sm:w-56"
+                placeholder="Search subject or code"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); c.setPage(1); }}
+              />
+            </div>
+          </div>
         </div>
         <Table>
           <thead>
             <tr>
-              <Th>Ticket</Th>
+              <SortTh sortKey="code" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Ticket</SortTh>
               <Th>Venture</Th>
-              <Th>Subject</Th>
-              <Th>Priority</Th>
-              <Th>Status</Th>
+              <SortTh sortKey="subject" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Subject</SortTh>
+              <SortTh sortKey="priority" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Priority</SortTh>
+              <SortTh sortKey="status" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Status</SortTh>
               <Th></Th>
             </tr>
           </thead>
@@ -103,6 +129,14 @@ export default function PlatformTicketsPage() {
             )}
           </tbody>
         </Table>
+        <Pagination
+          page={c.page}
+          totalPages={totalPages}
+          total={meta?.total}
+          pageSize={c.pageSize}
+          onPage={c.setPage}
+          onPageSize={c.setPageSize}
+        />
       </Card>
 
       <Drawer

@@ -21,21 +21,41 @@ import { useApi } from "@/lib/useApi";
 
 const catMeta = (v) => CATEGORIES.find((c) => c.value === v) ?? { label: v, icon: "circle-help" };
 
+const MAX_PHOTO_BYTES = 3 * 1024 * 1024; // 3 MB per photo
+
 export default function MemberHelpdesk() {
   const toast = useToast();
   const { data: raw, reload } = useApi("/member/helpdesk");
   const rows = normalizeList(raw); // backend returns this member's own
+  const { data: plotsRaw } = useApi("/member/plots");
+  const myPlots = normalizeList(plotsRaw);
   const [open, setOpen] = useState(false);
   const [verify, setVerify] = useState(null); // ticket to accept/reject
   const [rating, setRating] = useState(0);
   const [saving, setSaving] = useState(false);
   const [accepting, setAccepting] = useState(false);
   const [reopening, setReopening] = useState(false);
+  const [photos, setPhotos] = useState([]); // [{ url(dataURL), name }]
+
+  const addFiles = (fileList) => {
+    const files = Array.from(fileList || []);
+    files.slice(0, 4 - photos.length).forEach((file) => {
+      if (file.size > MAX_PHOTO_BYTES) {
+        toast(`${file.name} is larger than 3 MB`, "error");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => setPhotos((p) => [...p, { url: reader.result, name: file.name }]);
+      reader.readAsDataURL(file);
+    });
+  };
 
   const create = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const cat = f.get("category");
+    const plotNo = f.get("plotNo");
+    const loc = f.get("location")?.trim();
     setSaving(true);
     try {
       const { data } = await api.post("/member/helpdesk", {
@@ -43,9 +63,11 @@ export default function MemberHelpdesk() {
         description: f.get("description") || "",
         category: cat,
         priority: f.get("priority") || "medium",
-        location: f.get("location") || "—",
+        location: loc || plotNo || "—",
+        photos: photos.map((p) => ({ url: p.url, kind: "before", caption: p.name })),
       });
       setOpen(false);
+      setPhotos([]);
       toast(`${data.code} created — routed to ${catMeta(cat).team}`);
       reload();
     } catch (err) {
@@ -168,22 +190,46 @@ export default function MemberHelpdesk() {
               {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
           </Field>
-          <div className="sm:col-span-2">
-            <Field label="Location">
-              <input name="location" className={inputClass} placeholder="e.g. P-047 · Kitchen" />
-            </Field>
-          </div>
+          <Field label="Plot">
+            <select name="plotNo" className={inputClass} defaultValue={myPlots[0]?.plotNo ?? ""}>
+              {myPlots.length === 0 && <option value="">No linked plot</option>}
+              {myPlots.map((p) => (
+                <option key={p.id} value={p.plotNo}>{p.plotNo}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Location detail">
+            <input name="location" className={inputClass} placeholder="e.g. Kitchen / Block B Lobby" />
+          </Field>
           <div className="sm:col-span-2">
             <Field label="Description">
               <textarea name="description" rows={3} required className={inputClass} placeholder="Describe the issue in detail…" />
             </Field>
           </div>
           <div className="sm:col-span-2">
-            <span className="mb-1.5 block text-xs font-medium text-slate-600">Attachments</span>
-            <div className="grid place-items-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 py-5 text-slate-400">
-              <Icon name="paperclip" size={22} />
-              <p className="mt-1.5 text-xs">Click to attach photos (optional)</p>
-            </div>
+            <span className="mb-1.5 block text-xs font-medium text-slate-600">Photos (optional)</span>
+            <label className="grid cursor-pointer place-items-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 py-5 text-slate-400 hover:border-brand-300 hover:text-brand-500">
+              <Icon name="camera" size={22} />
+              <p className="mt-1.5 text-xs">Click to attach photos (up to 4, 3 MB each)</p>
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+            </label>
+            {photos.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {photos.map((p, i) => (
+                  <span key={i} className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.url} alt={p.name} className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" />
+                    <button
+                      type="button"
+                      onClick={() => setPhotos((list) => list.filter((_, j) => j !== i))}
+                      className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full bg-rose-500 text-white"
+                    >
+                      <Icon name="x" size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </form>
       </Modal>

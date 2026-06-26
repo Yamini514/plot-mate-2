@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   PageHeader,
   Card,
@@ -22,6 +22,8 @@ import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
+import { uploadDocument, formatBytes } from "@/lib/upload";
+import { useSettings } from "@/lib/useSettings";
 
 const catIcon = {
   Legal: "scale",
@@ -31,7 +33,7 @@ const catIcon = {
   Maintenance: "wrench",
   Other: "file",
 };
-const CATEGORIES = ["Legal", "Financial", "Meeting Minutes", "Layout", "Maintenance", "Other"];
+const DEFAULT_CATEGORIES = ["Legal", "Financial", "Meeting Minutes", "Layout", "Maintenance", "Other"];
 
 // Who can see a document, with owner-friendly labels.
 const VISIBILITY = {
@@ -40,10 +42,28 @@ const VISIBILITY = {
   plot: { label: "Specific plot", tone: "violet", icon: "map-pin" },
 };
 
-const emptyForm = { name: "", category: "Legal", customCategory: "", url: "", size: "", visibility: "owners", plotNo: "", approved: true };
+const DOC_TYPES = [
+  { value: "", label: "—" },
+  { value: "agreement", label: "Agreement" },
+  { value: "noc", label: "NOC" },
+  { value: "tax_receipt", label: "Tax receipt" },
+  { value: "id_proof", label: "ID proof" },
+  { value: "policy", label: "Policy" },
+  { value: "other", label: "Other" },
+];
+
+const expiryBadge = (d) => {
+  if (d.expiryState === "expired") return <Badge tone="rose"><Icon name="calendar-x" size={11} /> Expired</Badge>;
+  if (d.expiryState === "expiring") return <Badge tone="amber"><Icon name="calendar-clock" size={11} /> Expiring</Badge>;
+  return null;
+};
+
+const emptyForm = { name: "", category: "Legal", customCategory: "", url: "", size: "", visibility: "owners", plotNo: "", approved: true, docType: "", expiryDate: "", ownerName: "" };
 
 export default function AdminDocumentsPage() {
   const toast = useToast();
+  const { settings } = useSettings();
+  const CATEGORIES = settings.lists?.documentCategories?.length ? settings.lists.documentCategories : DEFAULT_CATEGORIES;
   const { data: raw, reload } = useApi("/admin/documents");
   const documents = normalizeList(raw);
   const [filter, setFilter] = useState("all"); // visibility scope filter
@@ -61,6 +81,8 @@ export default function AdminDocumentsPage() {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [approving, setApproving] = useState(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const fileRef = useRef(null);
 
   const openCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); };
   const openEdit = (d) => {
@@ -75,8 +97,32 @@ export default function AdminDocumentsPage() {
       visibility: d.visibility ?? "admin",
       plotNo: d.plotNo ?? "",
       approved: !!d.approved,
+      docType: d.docType ?? "",
+      expiryDate: d.expiryDate ? String(d.expiryDate).slice(0, 10) : "",
+      ownerName: d.ownerName ?? "",
     });
     setOpen(true);
+  };
+
+  // Upload the chosen file straight to S3, then fill the form's url/size (and
+  // name, if still blank) so saving just records the metadata.
+  const pickFile = async (file) => {
+    if (!file) return;
+    setUploadingFile(true);
+    try {
+      const { url } = await uploadDocument(file);
+      setForm((f) => ({
+        ...f,
+        url,
+        size: formatBytes(file.size),
+        name: f.name.trim() || file.name.replace(/\.[^.]+$/, ""),
+      }));
+      toast("File uploaded");
+    } catch (e) {
+      toast(e.message || "Could not upload file", "error");
+    } finally {
+      setUploadingFile(false);
+    }
   };
 
   const submit = async () => {
@@ -95,8 +141,8 @@ export default function AdminDocumentsPage() {
     }
     setSaving(true);
     try {
-      // Real files upload to S3 via /admin/documents/presign once AWS keys are
-      // set; until then we store the provided link (or a placeholder) as metadata.
+      // Files upload to S3 directly from the picker above (storing the private
+      // view-proxy URL); a pasted external link is also accepted, else "#".
       const payload = {
         name: form.name.trim(),
         category,
@@ -106,6 +152,9 @@ export default function AdminDocumentsPage() {
         plotNo: form.visibility === "plot" ? form.plotNo.trim() : null,
         // Admin-only docs are never owner-facing, so approval is moot there.
         approved: form.visibility === "admin" ? false : form.approved,
+        docType: form.docType || null,
+        expiryDate: form.expiryDate || null,
+        ownerName: form.ownerName.trim() || null,
       };
       if (editing) {
         await api.put(`/admin/documents/${editing.dbId}`, payload);
@@ -211,8 +260,11 @@ export default function AdminDocumentsPage() {
                       <Icon name={catIcon[d.category] ?? "file"} size={15} />
                     </span>
                     <span>
-                      <span className="block font-medium text-slate-800">{d.name}</span>
-                      <span className="block text-xs text-slate-400">{d.size} · {d.uploadedBy}</span>
+                      <span className="flex items-center gap-1.5 font-medium text-slate-800">{d.name} {expiryBadge(d)}</span>
+                      <span className="block text-xs text-slate-400">
+                        {d.size} · {d.uploadedBy}
+                        {d.expiryDate ? ` · expires ${formatDate(d.expiryDate)}` : ""}
+                      </span>
                     </span>
                   </div>
                 </Td>
@@ -274,13 +326,41 @@ export default function AdminDocumentsPage() {
         }
       >
         <div className="space-y-4">
-          {!editing && (
-            <div className="grid place-items-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-8 text-center">
-              <Icon name="file-up" size={26} className="text-slate-400" />
-              <p className="mt-2 text-sm font-medium text-slate-600">Drag &amp; drop or paste a link below</p>
-              <p className="text-xs text-slate-400">PDF, DOCX, XLSX up to 25 MB</p>
-            </div>
-          )}
+          <input
+            ref={fileRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              pickFile(file);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={uploadingFile}
+            className="grid w-full place-items-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 py-8 text-center hover:border-brand-400 disabled:opacity-60"
+          >
+            {uploadingFile ? (
+              <>
+                <Icon name="loader-circle" size={26} className="animate-spin text-brand-600" />
+                <p className="mt-2 text-sm font-medium text-slate-600">Uploading…</p>
+              </>
+            ) : form.url && form.url !== "#" ? (
+              <>
+                <Icon name="file-check-2" size={26} className="text-emerald-600" />
+                <p className="mt-2 text-sm font-medium text-slate-700">File attached{form.size && form.size !== "—" ? ` · ${form.size}` : ""}</p>
+                <p className="text-xs text-slate-400">Click to replace</p>
+              </>
+            ) : (
+              <>
+                <Icon name="file-up" size={26} className="text-slate-400" />
+                <p className="mt-2 text-sm font-medium text-slate-600">Click to choose a file</p>
+                <p className="text-xs text-slate-400">PDF, DOCX, XLSX, images — up to 25 MB</p>
+              </>
+            )}
+          </button>
           <Field label="Document name">
             <input className={inputClass} placeholder="e.g. Society bylaws 2025" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </Field>
@@ -307,8 +387,23 @@ export default function AdminDocumentsPage() {
               <input className={inputClass} placeholder="e.g. 2.4 MB" value={form.size} onChange={(e) => setForm({ ...form, size: e.target.value })} />
             </Field>
           )}
-          <Field label="File link (optional)" hint="Paste a shareable URL until file storage is configured">
+          <Field label="File link (optional)" hint="Or paste an external shareable URL instead of uploading a file">
             <input className={inputClass} placeholder="https://…" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+          </Field>
+
+          {/* Vault metadata — type, expiry, owner (drives expiry reminders) */}
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Document type">
+              <select className={inputClass} value={form.docType} onChange={(e) => setForm({ ...form, docType: e.target.value })}>
+                {DOC_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Expiry date" hint="Owners/admins get a reminder before it lapses">
+              <input type="date" className={inputClass} value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} />
+            </Field>
+          </div>
+          <Field label="Owner / party (optional)">
+            <input className={inputClass} placeholder="e.g. Rajesh Kumar" value={form.ownerName} onChange={(e) => setForm({ ...form, ownerName: e.target.value })} />
           </Field>
 
           {/* Visibility + approval */}

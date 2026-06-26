@@ -18,6 +18,7 @@ import { useToast } from "@/components/Toast";
 import { api } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { buildUpiUri } from "@/lib/payments";
+import { ListsEditor } from "./ListsEditor";
 
 // Indian financial year (Apr 1 – Mar 31), e.g. "2026–27".
 function currentFY() {
@@ -36,6 +37,7 @@ const tabs = [
   { id: "whatsapp", label: "WhatsApp", icon: "message-circle" },
   { id: "helplines", label: "Helplines", icon: "phone-call" },
   { id: "notifications", label: "Notifications", icon: "bell" },
+  { id: "lists", label: "Lists & Categories", icon: "list" },
 ];
 
 // One-click SMTP presets for common providers. "custom" leaves fields untouched.
@@ -110,6 +112,8 @@ export default function SettingsPage() {
         basePayFlat: live.basePayFlat ?? "",
         membershipFee: live.membershipFee ?? "",
         latePenaltyPct: live.latePenaltyPct ?? "",
+        penaltyGraceDays: live.penaltyGraceDays ?? "",
+        interestPercentMonthly: live.interestPercentMonthly ?? "",
         dueDate: live.dueDate ?? "",
         accountName: live.bank?.accountName ?? "",
         accountNo: live.bank?.accountNo ?? "",
@@ -256,6 +260,8 @@ export default function SettingsPage() {
         basePayFlat: Number(f.basePayFlat) || 0,
         membershipFee: Number(f.membershipFee) || 0,
         latePenaltyPct: Number(f.latePenaltyPct) || 0,
+        penaltyGraceDays: Number(f.penaltyGraceDays) || 0,
+        interestPercentMonthly: Number(f.interestPercentMonthly) || 0,
         dueDate: f.dueDate || "",
         bank: {
           accountName: f.accountName, accountNo: f.accountNo, ifsc: f.ifsc, bank: f.bankBranch, upi: f.upi,
@@ -406,6 +412,12 @@ export default function SettingsPage() {
                   </Field>
                   <Field label="Late payment penalty (%)">
                     <input type="number" className={inputClass} value={f.latePenaltyPct ?? ""} onChange={(e) => set("latePenaltyPct", e.target.value)} />
+                  </Field>
+                  <Field label="Penalty grace (days)" hint="Days overdue before a late fee applies.">
+                    <input type="number" min="0" className={inputClass} value={f.penaltyGraceDays ?? ""} onChange={(e) => set("penaltyGraceDays", e.target.value)} />
+                  </Field>
+                  <Field label="Monthly interest on overdue (%)" hint="0 disables interest accrual.">
+                    <input type="number" min="0" step="0.1" className={inputClass} value={f.interestPercentMonthly ?? ""} onChange={(e) => set("interestPercentMonthly", e.target.value)} />
                   </Field>
                   <Field label="Due date">
                     <input type="date" className={inputClass} value={f.dueDate ?? ""} onChange={(e) => set("dueDate", e.target.value)} />
@@ -865,6 +877,8 @@ export default function SettingsPage() {
               </div>
             </Card>
           )}
+
+          {tab === "lists" && <ListsEditor />}
         </div>
       </div>
     </div>

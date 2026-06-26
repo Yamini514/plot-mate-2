@@ -29,6 +29,8 @@ export function useNavBadges(role) {
 
   // Member — visitor pre-approvals awaiting the resident's decision.
   const { data: mVisitors } = useApi(member && ready ? "/member/visitors" : null, { page_size: 300 });
+  // Member — unread notifications.
+  const { data: mNotif } = useApi(member && ready ? "/member/notifications/unread" : null);
 
   const badges = {};
 
@@ -51,6 +53,7 @@ export function useNavBadges(role) {
     const v = Array.isArray(mVisitors) ? mVisitors : [];
     const pending = v.filter((x) => x.status === "pending").length;
     if (pending) badges["/member/visitors"] = pending;
+    if (mNotif?.count) badges["/member/notifications"] = mNotif.count;
   }
 
   return badges;

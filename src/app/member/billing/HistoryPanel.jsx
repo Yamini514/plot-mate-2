@@ -65,6 +65,8 @@ export function HistoryPanel() {
                 <Td className="text-slate-500">{formatDate(p.date)}</Td>
                 <Td className="capitalize">
                   <Badge tone="slate">{p.type}</Badge>
+                  {p.verificationStatus === "pending" && <Badge tone="amber" className="ml-1.5">pending</Badge>}
+                  {p.verificationStatus === "rejected" && <Badge tone="rose" className="ml-1.5">rejected</Badge>}
                 </Td>
                 <Td className="uppercase text-slate-500">{p.mode}</Td>
                 <Td className="font-mono text-xs text-slate-500">{p.reference}</Td>

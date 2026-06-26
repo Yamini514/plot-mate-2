@@ -65,6 +65,11 @@ export const MapCanvas = forwardRef(function MapCanvas(
 
   // In-progress drawing state.
   const [draftPts, setDraftPts] = useState([]); // polygon vertices (pct)
+  // Mirror so polygon-completion can read the current vertices without doing the
+  // work inside a setState updater (which would run — and fire the parent's
+  // onShapeComplete — during render: "setState while rendering" violation).
+  const draftPtsRef = useRef(draftPts);
+  draftPtsRef.current = draftPts;
   const [rectDraw, setRectDraw] = useState(null); // { x0,y0,x1,y1 } pct
   const pan = useRef(null); // { x, y, tx, ty } while a drag is active, else null
   const movedRef = useRef(false); // did the active drag actually move?
@@ -241,24 +246,37 @@ export const MapCanvas = forwardRef(function MapCanvas(
   const onCanvasClick = (e) => {
     if (mode === "edit" && tool === "polygon") {
       const p = pointerPct(e);
-      setDraftPts((pts) => {
-        // Click near the first vertex closes the polygon.
-        if (pts.length >= 3) {
-          const first = pts[0];
-          const vp = viewportRef.current.getBoundingClientRect();
-          const v = viewRef.current;
-          const fx = vp.left + v.tx + (first[0] / 100) * imgRef.current.w * v.scale;
-          const fy = vp.top + v.ty + (first[1] / 100) * imgRef.current.h * v.scale;
-          if (Math.hypot(e.clientX - fx, e.clientY - fy) < 12) {
-            onShapeComplete?.(pts, "polygon");
-            return [];
-          }
+      const pts = draftPtsRef.current;
+      // Click near the first vertex closes the polygon.
+      if (pts.length >= 3) {
+        const first = pts[0];
+        const vp = viewportRef.current.getBoundingClientRect();
+        const v = viewRef.current;
+        const fx = vp.left + v.tx + (first[0] / 100) * imgRef.current.w * v.scale;
+        const fy = vp.top + v.ty + (first[1] / 100) * imgRef.current.h * v.scale;
+        if (Math.hypot(e.clientX - fx, e.clientY - fy) < 12) {
+          setDraftPts([]);
+          onShapeComplete?.(pts, "polygon");
+          return;
         }
-        return [...pts, [p.x, p.y]];
-      });
+      }
+      setDraftPts((prev) => [...prev, [p.x, p.y]]);
       return;
     }
     if (wasDrag.current) { wasDrag.current = false; return; } // it was a pan, not a click
+    // Pin tool: a single click drops a small square at the cursor, then the page
+    // asks which plot it belongs to (same assign flow as a drawn shape).
+    if (mode === "edit" && tool === "point") {
+      const p = pointerPct(e);
+      const img = imgRef.current;
+      const t = Math.max(img.w, img.h) * 0.025; // ~2.5% pixel-square marker
+      const hw = ((t / img.w) * 100) / 2;
+      const hh = ((t / img.h) * 100) / 2;
+      const x0 = clamp(p.x - hw, 0, 100), y0 = clamp(p.y - hh, 0, 100);
+      const x1 = clamp(p.x + hw, 0, 100), y1 = clamp(p.y + hh, 0, 100);
+      onShapeComplete?.([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], "point");
+      return;
+    }
     const idxAttr = e.target?.getAttribute?.("data-idx");
     if (idxAttr == null) return;
     const reg = regions[Number(idxAttr)];
@@ -271,10 +289,9 @@ export const MapCanvas = forwardRef(function MapCanvas(
   };
 
   const finishPolygon = useCallback(() => {
-    setDraftPts((pts) => {
-      if (pts.length >= 3) onShapeComplete?.(pts, "polygon");
-      return [];
-    });
+    const pts = draftPtsRef.current;
+    setDraftPts([]);
+    if (pts.length >= 3) onShapeComplete?.(pts, "polygon");
   }, [onShapeComplete]);
 
   // Enter finishes a polygon, Escape cancels the in-progress drawing.
@@ -310,7 +327,7 @@ export const MapCanvas = forwardRef(function MapCanvas(
   const onPlotsLeave = () => onHover && onHover(null);
 
   /* ------------------------------- render -------------------------------- */
-  const cursor = isDrawingTool || (mode === "edit" && tool === "polygon")
+  const cursor = isDrawingTool || (mode === "edit" && (tool === "polygon" || tool === "point"))
     ? "crosshair"
     : grabbing
       ? "grabbing"

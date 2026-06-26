@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   PageHeader,
   Card,
@@ -11,9 +12,9 @@ import {
   Td,
   Tr,
   Badge,
+  inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { useToast } from "@/components/Toast";
 import {
   CollectionTrendChart,
   CategoryBarChart,
@@ -22,14 +23,19 @@ import {
 import { useSettings } from "@/lib/useSettings";
 import { normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import { formatINR } from "@/lib/utils";
+import { formatINR, downloadCSV, downloadExcel, printReport } from "@/lib/utils";
 
 export default function ReportsPage() {
-  const toast = useToast();
   const { settings } = useSettings();
   const { data: rep } = useApi("/admin/reports/overview");
   const { data: ps } = useApi("/admin/plots/summary");
   const { data: plotList } = useApi("/admin/plots", { page_size: 300 });
+  const { data: staffList } = useApi("/admin/staff");
+  const { data: maintList } = useApi("/admin/maintenance");
+
+  // Report filters.
+  const [phase, setPhase] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const stats = {
     collectionRate: rep?.collection?.rate ?? 0,
@@ -56,19 +62,88 @@ export default function ReportsPage() {
       };
     });
 
-  const reportFiles = [
-    { name: "Collection Summary – FY 2024–25", icon: "file-spreadsheet", desc: "Plot-wise paid / pending breakdown" },
-    { name: "Expense Ledger – FY 2024–25", icon: "file-text", desc: "All expenses by category & vendor" },
-    { name: "Defaulters List", icon: "file-warning", desc: `${stats.pendingCount} plots with pending dues` },
-    { name: "Balance Sheet", icon: "file-chart-column", desc: "Income, expenses & closing balance" },
+  // Owners filtered by the report filter bar (phase + payment status).
+  const filteredOwners = owners.filter(
+    (o) => (phase === "all" || o.phase === phase) &&
+           (statusFilter === "all" || o.paymentStatus === statusFilter),
+  );
+  const phases = Array.from(new Set(owners.map((o) => o.phase).filter(Boolean))).sort();
+  const vendors = normalizeList(staffList).filter((s) => s.type === "vendor" || s.kind === "vendor");
+  const schedules = normalizeList(maintList);
+
+  // Each report: a title, columns, and the rows to export. Exports are built
+  // client-side (CSV/Excel/PDF) from already-fetched data — no auth-gated link.
+  const reportDefs = [
+    {
+      key: "collection", name: "Collection Summary", icon: "file-spreadsheet",
+      desc: "Plot-wise paid / pending breakdown",
+      rows: filteredOwners,
+      columns: [
+        { label: "Plot", get: (o) => o.plotNo }, { label: "Owner", get: (o) => o.ownerName },
+        { label: "Phase", get: (o) => o.phase }, { label: "Status", get: (o) => o.paymentStatus },
+        { label: "Amount due", get: (o) => o.amountDue },
+      ],
+    },
+    {
+      key: "defaulters", name: "Defaulters List", icon: "file-warning",
+      desc: `${stats.pendingCount} plots with pending dues`,
+      rows: filteredOwners.filter((o) => o.paymentStatus === "pending"),
+      columns: [
+        { label: "Plot", get: (o) => o.plotNo }, { label: "Owner", get: (o) => o.ownerName },
+        { label: "Phone", get: (o) => o.phone }, { label: "Amount due", get: (o) => o.amountDue },
+        { label: "Days overdue", get: (o) => o.daysOverdue },
+      ],
+    },
+    {
+      key: "expenses", name: "Expense Ledger", icon: "file-text",
+      desc: "Expenses by category",
+      rows: expenseByCategory,
+      columns: [{ label: "Category", get: (e) => e.name }, { label: "Amount", get: (e) => e.value }],
+    },
+    {
+      key: "plots", name: "Plots Report", icon: "map-pinned",
+      desc: `${filteredOwners.length} plots`,
+      rows: filteredOwners,
+      columns: [
+        { label: "Plot", get: (o) => o.plotNo }, { label: "Owner", get: (o) => o.ownerName },
+        { label: "Phase", get: (o) => o.phase }, { label: "Size (sqyd)", get: (o) => o.sizeSqyd },
+        { label: "Status", get: (o) => o.status }, { label: "Membership", get: (o) => o.membership },
+      ],
+    },
+    {
+      key: "vendors", name: "Vendors Report", icon: "hard-hat",
+      desc: `${vendors.length} vendors`,
+      rows: vendors,
+      columns: [
+        { label: "Name", get: (v) => v.name }, { label: "Categories", get: (v) => (v.categories || []).join("; ") },
+        { label: "SLA (hrs)", get: (v) => v.slaResponseHours }, { label: "Verified", get: (v) => (v.verified ? "Yes" : "No") },
+        { label: "Status", get: (v) => v.status },
+      ],
+    },
+    {
+      key: "maintenance", name: "Maintenance Report", icon: "calendar-clock",
+      desc: `${schedules.length} schedules`,
+      rows: schedules,
+      columns: [
+        { label: "Task", get: (m) => m.title || m.name }, { label: "Frequency", get: (m) => m.frequency },
+        { label: "Next due", get: (m) => m.nextDueOn }, { label: "Assignee", get: (m) => m.assigneeName || m.assignee },
+        { label: "State", get: (m) => m.state },
+      ],
+    },
   ];
+
+  const exportReport = (def, fmt) => {
+    const fname = def.key;
+    if (fmt === "csv") downloadCSV(`${fname}.csv`, def.rows, def.columns);
+    else if (fmt === "excel") downloadExcel(`${fname}.xls`, def.rows, def.columns, def.name);
+    else printReport(def.name, def.rows, def.columns, `PlotMate · FY ${settings.fy}`);
+  };
 
   return (
     <div className="animate-fade-in">
       <PageHeader
         title="Reports & Analytics"
         subtitle={`Financial and collection insights · FY ${settings.fy}`}
-        actions={<Button icon="download" onClick={() => toast("All reports downloaded (PDF)")}>Download all (PDF)</Button>}
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -136,22 +211,37 @@ export default function ReportsPage() {
       </div>
 
       <Card className="mt-6">
-        <CardHeader title="Downloadable reports" icon="folder-down" />
+        <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <CardHeader title="Downloadable reports" icon="folder-down" />
+          <div className="flex gap-2">
+            <select className={`${inputClass} w-36`} value={phase} onChange={(e) => setPhase(e.target.value)}>
+              <option value="all">All phases</option>
+              {phases.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <select className={`${inputClass} w-36`} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="all">All statuses</option>
+              <option value="paid">Paid</option>
+              <option value="pending">Pending</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </div>
+        </div>
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
-          {reportFiles.map((r) => (
-            <button
-              key={r.name}
-              onClick={() => toast(`Downloading: ${r.name}`)}
-              className="flex items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition-colors hover:border-brand-300 hover:bg-brand-50/40"
-            >
-              <span className="grid h-10 w-10 place-items-center rounded-lg bg-brand-50 text-brand-600">
+          {reportDefs.map((r) => (
+            <div key={r.key} className="flex items-center gap-3 rounded-xl border border-slate-200 p-4">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-600">
                 <Icon name={r.icon} size={18} />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-slate-800">{r.name}</p>
-                <p className="text-xs text-slate-400">{r.desc}</p>
+                <p className="text-xs text-slate-400">{r.desc} · {r.rows.length} rows</p>
               </div>
-            </button>
+              <div className="flex shrink-0 gap-1">
+                <Button size="sm" variant="ghost" disabled={!r.rows.length} onClick={() => exportReport(r, "csv")}>CSV</Button>
+                <Button size="sm" variant="ghost" disabled={!r.rows.length} onClick={() => exportReport(r, "excel")}>Excel</Button>
+                <Button size="sm" variant="ghost" disabled={!r.rows.length} onClick={() => exportReport(r, "pdf")}>PDF</Button>
+              </div>
+            </div>
           ))}
         </div>
       </Card>

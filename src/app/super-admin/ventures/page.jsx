@@ -1,21 +1,28 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
-  PageHeader, Card, Button, Badge, Segmented, Table, Th, Td, Tr, ConfirmDialog,
+  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, ConfirmDialog, Pagination,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
-import { useApi } from "@/lib/useApi";
+import { useApi, useDebounced } from "@/lib/useApi";
+import { useListControls } from "@/lib/useList";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
 
 export default function VenturesPage() {
   const toast = useToast();
+  const router = useRouter();
   const [filter, setFilter] = useState("all");
-  const { data: raw, meta, reload, loading } = useApi("/super/ventures", { status: filter });
+  const [search, setSearch] = useState("");
+  const c = useListControls();
+  const q = useDebounced(search);
+  const { data: raw, meta, reload, loading } = useApi("/super/ventures", { status: filter, search: q, ...c.query });
   const ventures = normalizeList(raw);
   const counts = meta?.counts ?? {};
+  const totalPages = meta?.totalPages ?? 1;
 
   const [busyId, setBusyId] = useState(null);
   const [suspend, setSuspend] = useState(null); // venture pending suspension
@@ -42,32 +49,41 @@ export default function VenturesPage() {
       />
 
       <Card>
-        <div className="border-b border-slate-100 p-4">
+        <div className="flex flex-col gap-3 border-b border-slate-100 p-4 lg:flex-row lg:items-center lg:justify-between">
           <Segmented
             value={filter}
-            onChange={setFilter}
+            onChange={(v) => { setFilter(v); c.setPage(1); }}
             options={[
               { value: "all", label: "All", count: counts.all },
               { value: "active", label: "Active", count: counts.active },
               { value: "suspended", label: "Suspended", count: counts.suspended },
             ]}
           />
+          <div className="relative">
+            <Icon name="search" size={15} className="absolute left-2.5 top-2.5 text-slate-400" />
+            <input
+              className="w-full rounded-lg border border-slate-200 py-2 pl-8 pr-3 text-sm sm:w-64"
+              placeholder="Search name or email"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); c.setPage(1); }}
+            />
+          </div>
         </div>
         <Table>
           <thead>
             <tr>
-              <Th>Venture</Th>
-              <Th>Email</Th>
+              <SortTh sortKey="name" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Venture</SortTh>
+              <SortTh sortKey="email" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Email</SortTh>
               <Th className="text-right">Users</Th>
               <Th className="text-right">Plots</Th>
-              <Th>Created</Th>
-              <Th>Status</Th>
+              <SortTh sortKey="created_at" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Created</SortTh>
+              <SortTh sortKey="status" sort={c.sort} dir={c.dir} onSort={c.toggleSort}>Status</SortTh>
               <Th></Th>
             </tr>
           </thead>
           <tbody>
             {ventures.map((v) => (
-              <Tr key={v.id}>
+              <Tr key={v.id} className="cursor-pointer" onClick={() => router.push(`/super-admin/ventures/${v.dbId}`)}>
                 <Td>
                   <div className="flex items-center gap-2">
                     <span className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100 text-slate-500">
@@ -84,7 +100,7 @@ export default function VenturesPage() {
                   <Badge tone={v.status === "active" ? "green" : "rose"}>{v.status}</Badge>
                 </Td>
                 <Td>
-                  <div className="flex justify-end">
+                  <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
                     {v.status === "active" ? (
                       <Button variant="secondary" icon="pause" onClick={() => setSuspend(v)}>
                         Suspend
@@ -111,6 +127,14 @@ export default function VenturesPage() {
             )}
           </tbody>
         </Table>
+        <Pagination
+          page={c.page}
+          totalPages={totalPages}
+          total={meta?.total}
+          pageSize={c.pageSize}
+          onPage={c.setPage}
+          onPageSize={c.setPageSize}
+        />
       </Card>
 
       <ConfirmDialog

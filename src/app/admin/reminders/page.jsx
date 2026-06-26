@@ -17,7 +17,7 @@ import { useToast } from "@/components/Toast";
 import { useSettings } from "@/lib/useSettings";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import { formatINR } from "@/lib/utils";
+import { formatINR, formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 const channels = [
@@ -40,8 +40,58 @@ export default function RemindersPage() {
   const [channel, setChannel] = useState("whatsapp");
   const [audience, setAudience] = useState("pending");
   const [when, setWhen] = useState("now");
+  const [customAt, setCustomAt] = useState("");
   const [sending, setSending] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [autoBusy, setAutoBusy] = useState(false);
+
+  // Resolve the chosen schedule into an absolute ISO timestamp (null = send now).
+  const resolveScheduledFor = () => {
+    if (when === "tomorrow") {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      d.setHours(9, 0, 0, 0);
+      return d.toISOString();
+    }
+    if (when === "custom") return customAt ? new Date(customAt).toISOString() : null;
+    return null; // "now"
+  };
+
+  // Open the confirm dialog, but first make sure a custom schedule is valid —
+  // otherwise the reminder would be saved "scheduled" with no time (the bug).
+  const openConfirm = () => {
+    if (when === "custom") {
+      if (!customAt) return toast("Pick a date and time for the custom schedule", "error");
+      if (new Date(customAt).getTime() <= Date.now()) return toast("Choose a date and time in the future", "error");
+    }
+    setConfirmOpen(true);
+  };
+
+  // datetime-local needs a local "YYYY-MM-DDTHH:mm" string, not an ISO/UTC one.
+  const localDatetimeMin = (() => {
+    const d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+    return d.toISOString().slice(0, 16);
+  })();
+
+  // One-click: schedule a reminder for every plot with an open invoice balance
+  // (driven by actual dues, skipping plots already queued).
+  const autoSchedule = async () => {
+    setAutoBusy(true);
+    try {
+      const { data } = await api.post("/admin/reminders/generate", { channel });
+      toast(
+        data?.created
+          ? `Scheduled ${data.created} reminder(s) for defaulters via ${channel}`
+          : "No new defaulters to remind — everyone's either paid or already queued",
+        data?.created ? "success" : "info",
+      );
+      reload();
+    } catch (e) {
+      toast(e.message || "Could not auto-schedule", "error");
+    } finally {
+      setAutoBusy(false);
+    }
+  };
 
   const recipientCount =
     audience === "overdue" ? overdueCount : audience === "pending" ? pendingCount : 1;
@@ -53,6 +103,7 @@ export default function RemindersPage() {
     try {
       const { data: plots } = await api.get("/admin/plots", { status: "pending", page_size: 300 });
       const status = when === "now" ? "sent" : "scheduled";
+      const scheduledFor = resolveScheduledFor();
       const targets = normalizeList(plots).slice(0, 50);
       const results = await Promise.all(
         targets.flatMap((p) =>
@@ -60,6 +111,7 @@ export default function RemindersPage() {
             api.post("/admin/reminders", {
               plotNo: p.plotNo, ownerName: p.ownerName, amount: p.amountDue,
               channel: ch, status,
+              scheduledFor: scheduledFor || undefined,
               email: p.email || undefined, phone: p.phone || undefined,
             }).then(({ data }) => data?.delivery).catch(() => null),
           ),
@@ -94,7 +146,11 @@ export default function RemindersPage() {
       <PageHeader
         title="Payment Reminders"
         subtitle="Compose and schedule maintenance-fee reminders"
-        actions={<Button variant="secondary" icon="history" onClick={() => toast("Showing reminder history", "info")}>History</Button>}
+        actions={
+          <Button icon="wand-sparkles" loading={autoBusy} onClick={autoSchedule}>
+            Auto-schedule defaulters
+          </Button>
+        }
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -172,13 +228,34 @@ export default function RemindersPage() {
                   </button>
                 ))}
               </div>
+
+              {when === "custom" && (
+                <div className="mt-3">
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600">Date &amp; time</label>
+                  <input
+                    type="datetime-local"
+                    value={customAt}
+                    min={localDatetimeMin}
+                    onChange={(e) => setCustomAt(e.target.value)}
+                    className={inputClass}
+                  />
+                  {customAt && (
+                    <p className="mt-1 text-xs text-slate-400">
+                      Will be scheduled for {new Date(customAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+              )}
+              {when === "tomorrow" && (
+                <p className="mt-2 text-xs text-slate-400">Scheduled for tomorrow at 9:00 AM.</p>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
               <Button variant="secondary" icon="eye" onClick={() => toast("Preview updated", "info")}>
                 Preview
               </Button>
-              <Button icon="send" onClick={() => setConfirmOpen(true)} loading={sending}>
+              <Button icon="send" onClick={openConfirm} loading={sending}>
                 {when === "now" ? "Send now" : "Schedule"}
               </Button>
             </div>
@@ -222,7 +299,10 @@ export default function RemindersPage() {
                     <p className="truncate text-sm font-medium text-slate-700">
                       {r.ownerName} · {r.plotNo}
                     </p>
-                    <p className="text-xs text-slate-400">{formatINR(r.amount)} due</p>
+                    <p className="text-xs text-slate-400">
+                      {formatINR(r.amount)} due
+                      {r.status === "scheduled" && r.scheduledFor ? ` · ${formatDate(r.scheduledFor)}` : ""}
+                    </p>
                   </div>
                   <StatusBadge status={r.status} />
                 </div>
