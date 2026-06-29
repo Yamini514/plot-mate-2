@@ -36,6 +36,7 @@ const FALLBACK = {
   committee: [],
   helplines: [],
   lists: {},
+  features: { enabled: {}, disabledNav: [] },
 };
 
 export function useSettings() {
@@ -50,6 +51,10 @@ export function useSettings() {
       committee: Array.isArray(s.committee) ? s.committee : [],
       helplines: Array.isArray(s.helplines) ? s.helplines : [],
       lists: s.lists ?? {},
+      features: {
+        enabled: s.features?.enabled ?? {},
+        disabledNav: Array.isArray(s.features?.disabledNav) ? s.features.disabledNav : [],
+      },
     },
     loading,
   };

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth, homePath } from "@/lib/auth";
 import { useSettings } from "@/lib/useSettings";
 import { useNavBadges } from "@/lib/useNavBadges";
+import { usePermissions } from "@/lib/usePermissions";
 import { useApi, useDebounced } from "@/lib/useApi";
 import { normalizeList } from "@/lib/api";
 import { Icon } from "./Icon";
@@ -116,6 +117,15 @@ export function AppShell({ nav, role, children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const badges = useNavBadges(role);
 
+  // RBAC: only fetch permissions for the admin shell (committee/staff log in
+  // here). Other roles have no permissioned nav, so it's skipped. Nav items
+  // without a `perm` are always visible; the owner-admin holds all perms.
+  const { can, loading: permsLoading } = usePermissions(role === "admin");
+  // Feature flags (super-admin per-venture toggles) hide whole modules; combined
+  // with RBAC permission filtering above.
+  const disabledNav = settings.features?.disabledNav ?? [];
+  const visibleNav = nav.filter((n) => (!n.perm || can(n.perm)) && !disabledNav.includes(n.href));
+
   // --- Top-bar dropdowns: notifications (bell) + help (?) --------------------
   const [notifOpen, setNotifOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -143,7 +153,7 @@ export function AppShell({ nav, role, children }) {
   const notifications = Object.entries(badges)
     .filter(([, count]) => count > 0)
     .map(([href, count]) => {
-      const item = nav.find((n) => n.href === href) || nav.find((n) => href.startsWith(n.href));
+      const item = visibleNav.find((n) => n.href === href) || visibleNav.find((n) => href.startsWith(n.href));
       return {
         href,
         count,
@@ -228,6 +238,20 @@ export function AppShell({ nav, role, children }) {
     else if (user.role !== role) router.replace(homePath(user.role));
   }, [ready, user, role, router]);
 
+  // RBAC route guard: a committee/staff member who deep-links (or is redirected)
+  // to a module their role doesn't grant is bounced to their first allowed page.
+  // Waits for permissions to load so the owner-admin isn't bounced on first paint.
+  useEffect(() => {
+    if (role !== "admin" || permsLoading) return;
+    const current = nav.find((n) => n.href === pathname);
+    const blocked = current && ((current.perm && !can(current.perm)) || disabledNav.includes(current.href));
+    if (blocked) {
+      const first = visibleNav[0]?.href || "/login";
+      router.replace(first);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, permsLoading, pathname]);
+
   useEffect(() => setMobileOpen(false), [pathname]);
 
   if (!ready || !user || user.role !== role) {
@@ -238,8 +262,8 @@ export function AppShell({ nav, role, children }) {
     );
   }
 
-  // group nav items
-  const groups = nav.reduce((acc, item) => {
+  // group nav items (permission-filtered)
+  const groups = visibleNav.reduce((acc, item) => {
     const g = item.group ?? "General";
     (acc[g] ??= []).push(item);
     return acc;

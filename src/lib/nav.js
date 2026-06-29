@@ -1,34 +1,38 @@
 // Note: count badges are no longer hardcoded here — they're computed live in
 // useNavBadges() and merged in by AppShell (keyed on href).
+// `perm` is the "module.view" permission a nav item requires (RBAC). The venture
+// owner-admin / super admin hold all permissions, so they see everything; a
+// committee/staff member sees only items their role grants.
 export const adminNav = [
-  { label: "Dashboard", href: "/admin", icon: "layout-dashboard", group: "Overview" },
-  { label: "Plot Map", href: "/admin/plot-map", icon: "map", group: "Overview" },
-  { label: "Plot Owners", href: "/admin/owners", icon: "users", group: "Community" },
-  { label: "Approvals", href: "/admin/approvals", icon: "clipboard-check", group: "Community" },
-  { label: "Invites", href: "/admin/invites", icon: "user-plus", group: "Community" },
-  { label: "Transfers", href: "/admin/transfers", icon: "arrow-left-right", group: "Community" },
-  { label: "Treasury", href: "/admin/treasury", icon: "wallet", group: "Finance" },
-  { label: "Reminders", href: "/admin/reminders", icon: "bell-ring", group: "Finance" },
-  { label: "Reports", href: "/admin/reports", icon: "bar-chart-3", group: "Finance" },
+  { label: "Dashboard", href: "/admin", icon: "layout-dashboard", group: "Overview", perm: "dashboard.view" },
+  { label: "Plot Map", href: "/admin/plot-map", icon: "map", group: "Overview", perm: "plots.view" },
+  { label: "Plot Owners", href: "/admin/owners", icon: "users", group: "Community", perm: "owners.view" },
+  { label: "Approvals", href: "/admin/approvals", icon: "clipboard-check", group: "Community", perm: "owners.view" },
+  { label: "Invites", href: "/admin/invites", icon: "user-plus", group: "Community", perm: "owners.create" },
+  { label: "Transfers", href: "/admin/transfers", icon: "arrow-left-right", group: "Community", perm: "owners.edit" },
+  { label: "Treasury", href: "/admin/treasury", icon: "wallet", group: "Finance", perm: "finance.view" },
+  { label: "Reminders", href: "/admin/reminders", icon: "bell-ring", group: "Finance", perm: "payments.view" },
+  { label: "Reports", href: "/admin/reports", icon: "bar-chart-3", group: "Finance", perm: "reports.view" },
   // Collections page hosts the billing overview + invoices as tabs.
-  { label: "Collections", href: "/admin/billing", icon: "gauge", group: "Billing" },
-  { label: "Charges & Fees", href: "/admin/billing/plans", icon: "scroll-text", group: "Billing" },
+  { label: "Collections", href: "/admin/billing", icon: "gauge", group: "Billing", perm: "payments.view" },
+  { label: "Charges & Fees", href: "/admin/billing/plans", icon: "scroll-text", group: "Billing", perm: "payments.view" },
   // Helpdesk page hosts the analytics overview + tickets as tabs.
-  { label: "Helpdesk", href: "/admin/helpdesk", icon: "life-buoy", group: "Support" },
-  { label: "Complaints", href: "/admin/complaints", icon: "message-square-warning", group: "Community" },
-  { label: "Amenities", href: "/admin/amenities", icon: "calendar-check", group: "Community" },
-  { label: "Events", href: "/admin/events", icon: "calendar-days", group: "Community" },
-  { label: "Polls", href: "/admin/polls", icon: "vote", group: "Community" },
+  { label: "Helpdesk", href: "/admin/helpdesk", icon: "life-buoy", group: "Support", perm: "workorders.view" },
+  { label: "Complaints", href: "/admin/complaints", icon: "message-square-warning", group: "Community", perm: "complaints.view" },
+  { label: "Amenities", href: "/admin/amenities", icon: "calendar-check", group: "Community", perm: "notices.view" },
+  { label: "Events", href: "/admin/events", icon: "calendar-days", group: "Community", perm: "notices.view" },
+  { label: "Polls", href: "/admin/polls", icon: "vote", group: "Community", perm: "notices.view" },
   // Security page hosts the oversight overview + gate log as tabs.
-  { label: "Security & Gate", href: "/admin/security", icon: "shield-check", group: "Operations" },
-  { label: "Staff & Vendors", href: "/admin/staff", icon: "hard-hat", group: "Operations" },
-  { label: "Maintenance", href: "/admin/maintenance", icon: "calendar-clock", group: "Operations" },
-  { label: "Projects", href: "/admin/projects", icon: "hammer", group: "Operations" },
-  { label: "Site Photos", href: "/admin/photos", icon: "image", group: "Operations" },
-  { label: "Announcements", href: "/admin/announcements", icon: "megaphone", group: "Operations" },
-  { label: "Documents", href: "/admin/documents", icon: "folder", group: "Operations" },
-  { label: "Roles & Approvals", href: "/admin/roles", icon: "shield-check", group: "System" },
-  { label: "Settings", href: "/admin/settings", icon: "settings", group: "System" },
+  { label: "Security & Gate", href: "/admin/security", icon: "shield-check", group: "Operations", perm: "support.view" },
+  { label: "Staff & Vendors", href: "/admin/staff", icon: "hard-hat", group: "Operations", perm: "vendors.view" },
+  { label: "Maintenance", href: "/admin/maintenance", icon: "calendar-clock", group: "Operations", perm: "maintenance.view" },
+  { label: "Projects", href: "/admin/projects", icon: "hammer", group: "Operations", perm: "projects.view" },
+  { label: "Site Photos", href: "/admin/photos", icon: "image", group: "Operations", perm: "documents.view" },
+  { label: "Announcements", href: "/admin/announcements", icon: "megaphone", group: "Operations", perm: "notices.view" },
+  { label: "Documents", href: "/admin/documents", icon: "folder", group: "Operations", perm: "documents.view" },
+  { label: "Committee & Staff", href: "/admin/committee", icon: "users-round", group: "System", perm: "committee.view" },
+  { label: "Roles & Approvals", href: "/admin/roles", icon: "shield-check", group: "System", perm: "committee.assign" },
+  { label: "Settings", href: "/admin/settings", icon: "settings", group: "System", perm: "settings.view" },
 ];
 
 // Platform layer — the super admin sits above all ventures.
@@ -51,18 +55,33 @@ export const guardNav = [
   { label: "Dashboard", href: "/guard", icon: "layout-dashboard", group: "Overview" },
   { label: "Visitors", href: "/guard/visitors", icon: "users-round", group: "Gate" },
   { label: "Deliveries", href: "/guard/deliveries", icon: "package", group: "Gate" },
-  { label: "Residents", href: "/guard/residents", icon: "car", group: "Gate" },
+  { label: "Vehicles", href: "/guard/vehicles", icon: "car", group: "Gate" },
+  { label: "Staff & Vendors", href: "/guard/domestic", icon: "hard-hat", group: "Gate" },
+  { label: "Residents", href: "/guard/residents", icon: "users", group: "Gate" },
+  { label: "Gate Register", href: "/guard/register", icon: "scroll-text", group: "Gate" },
   { label: "Incidents", href: "/guard/incidents", icon: "shield-alert", group: "Security" },
+  { label: "Patrols", href: "/guard/patrols", icon: "route", group: "Security" },
+  { label: "Lost & Found", href: "/guard/lost-found", icon: "package-search", group: "Security" },
   { label: "Service Requests", href: "/guard/tickets", icon: "ticket", group: "Security" },
   { label: "Blacklist & Alerts", href: "/guard/blacklist", icon: "ban", group: "Security" },
   { label: "Reports", href: "/guard/reports", icon: "file-text", group: "System" },
+  { label: "Notifications", href: "/guard/notifications", icon: "bell", group: "System" },
+  { label: "Support", href: "/guard/support", icon: "life-buoy", group: "System" },
   { label: "Profile & Shift", href: "/guard/profile", icon: "id-card", group: "System" },
+  { label: "Settings", href: "/guard/settings", icon: "settings", group: "System" },
 ];
 
 // Service-partner portal — vendors only see the work orders assigned to them.
 export const vendorNav = [
-  { label: "Work Orders", href: "/vendor", icon: "clipboard-list", group: "Work" },
+  { label: "Dashboard", href: "/vendor", icon: "layout-dashboard", group: "Work" },
+  { label: "Complaints", href: "/vendor/complaints", icon: "message-square-warning", group: "Work" },
+  { label: "Maintenance", href: "/vendor/maintenance", icon: "calendar-clock", group: "Work" },
+  { label: "Projects", href: "/vendor/projects", icon: "hammer", group: "Work" },
+  { label: "Payments", href: "/vendor/payments", icon: "banknote", group: "Work" },
+  { label: "Support", href: "/vendor/support", icon: "life-buoy", group: "Account" },
+  { label: "Notifications", href: "/vendor/notifications", icon: "bell", group: "Account" },
   { label: "My Profile", href: "/vendor/profile", icon: "id-card", group: "Account" },
+  { label: "Settings", href: "/vendor/settings", icon: "settings", group: "Account" },
 ];
 
 export const memberNav = [

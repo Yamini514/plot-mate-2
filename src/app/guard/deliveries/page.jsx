@@ -23,6 +23,8 @@ import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
+import { useSettings } from "@/lib/useSettings";
+import { uploadImage } from "@/lib/upload";
 import { usePlotVerify, PlotVerifyHint } from "@/components/PlotVerify";
 
 const FILTERS = [
@@ -55,6 +57,8 @@ function downloadCSV(filename, rows, columns) {
 
 export default function DeliveryTracking() {
   const toast = useToast();
+  const { settings } = useSettings();
+  const companies = settings.lists?.deliveryCompanies?.length ? settings.lists.deliveryCompanies : ["Amazon", "Flipkart", "Swiggy", "Zomato", "Blue Dart", "DTDC", "India Post", "Other"];
   const { data: raw, reload } = useApi("/guard/deliveries", { page_size: 300 });
   // Map backend field names to the labels this page renders.
   const rows = normalizeList(raw).map((d) => ({
@@ -65,6 +69,8 @@ export default function DeliveryTracking() {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [photo, setPhoto] = useState(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   // Log-form fields with live plot verification (same as the visitor gate flow).
   const [flat, setFlat] = useState("");
@@ -78,7 +84,7 @@ export default function DeliveryTracking() {
     }
   }, [verify]);
 
-  const resetForm = () => { setFlat(""); setResident(""); };
+  const resetForm = () => { setFlat(""); setResident(""); setPhoto(null); };
   const closeLog = () => { setOpen(false); resetForm(); };
 
   const counts = useMemo(() => {
@@ -125,6 +131,8 @@ export default function DeliveryTracking() {
       const { data } = await api.post("/guard/deliveries", {
         courier,
         agent: (f.get("agent") || "").toString().trim() || "—",
+        mobile: (f.get("mobile") || "").toString().trim() || null,
+        photoUrl: photo,
         residentName: resident.trim(),
         plotNo: flat.trim(),
         status: "received",
@@ -282,11 +290,26 @@ export default function DeliveryTracking() {
         }
       >
         <form id="log-package" onSubmit={logPackage} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Courier / Vendor">
-            <input name="courier" required className={inputClass} placeholder="e.g. Amazon, Blue Dart" />
+          <Field label="Courier / Company">
+            <input name="courier" required list="delivery-companies" className={inputClass} placeholder="e.g. Amazon, Blue Dart" />
+            <datalist id="delivery-companies">
+              {companies.map((c) => <option key={c} value={c} />)}
+            </datalist>
           </Field>
           <Field label="Delivery agent (optional)">
             <input name="agent" className={inputClass} placeholder="e.g. Sameer K." />
+          </Field>
+          <Field label="Agent mobile (optional)">
+            <input name="mobile" maxLength={10} className={inputClass} placeholder="10-digit mobile" />
+          </Field>
+          <Field label="Parcel photo (optional)">
+            <input type="file" accept="image/*" disabled={uploadingPhoto} onChange={async (e) => {
+              const file = e.target.files?.[0]; if (!file) return;
+              setUploadingPhoto(true);
+              try { setPhoto(await uploadImage(file)); } catch (err) { toast(err.message || "Upload failed", "error"); }
+              finally { setUploadingPhoto(false); }
+            }} />
+            {photo && <span className="mt-1 inline-flex items-center gap-1 text-xs text-brand-600"><Icon name="check" size={12} /> photo attached</span>}
           </Field>
           <Field label="Flat / Plot no.">
             <input
