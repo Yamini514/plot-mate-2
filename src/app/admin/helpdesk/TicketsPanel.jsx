@@ -31,6 +31,7 @@ import {
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { WorkOrderMaterials } from "@/components/WorkOrderMaterials";
+import { formatDate, formatINR } from "@/lib/utils";
 
 const catMeta = (v) => CATEGORIES.find((c) => c.value === v) ?? { label: v, icon: "circle-help" };
 
@@ -75,6 +76,18 @@ export function TicketsPanel() {
   const [note, setNote] = useState("");
   const [labourCost, setLabourCost] = useState("");
   const [rateScore, setRateScore] = useState(0);
+  const [comment, setComment] = useState("");
+
+  const postComment = async () => {
+    if (!comment.trim()) return toast("Write a reply", "error");
+    setDrawerBusy("comment");
+    try {
+      await api.post(`/admin/helpdesk/tickets/${active.dbId}/comment`, { body: comment.trim(), internal: true });
+      setComment("");
+      refreshDetail();
+    } catch (e) { toast(e.message || "Could not post", "error"); }
+    finally { setDrawerBusy(null); }
+  };
   const [reason, setReason] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
   const [photoKind, setPhotoKind] = useState("before");
@@ -569,6 +582,48 @@ export function TicketsPanel() {
             {/* Materials & cost */}
             {detail && (
               <WorkOrderMaterials base="/admin/helpdesk/tickets" ticketId={active.dbId} detail={detail} onChanged={refreshDetail} />
+            )}
+
+            {/* Timeline + vendor↔admin comments */}
+            {detail && (
+              <div className="rounded-xl border border-slate-200 p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Timeline</p>
+                {(detail.events?.length ?? 0) === 0 ? (
+                  <p className="text-xs text-slate-400">No activity yet.</p>
+                ) : (
+                  <ul className="space-y-2 text-sm">
+                    {detail.events.map((e) => (
+                      <li key={e.id} className="flex gap-2">
+                        <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500"><Icon name="dot" size={12} /></span>
+                        <div><p className="text-slate-700">{e.body}</p><p className="text-xs text-slate-400">{e.actorName || "system"} · {formatDate(e.createdAt)}</p></div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="mt-2 flex items-end gap-2">
+                  <Field label="Reply to vendor">
+                    <input className={inputClass} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Message the vendor…" />
+                  </Field>
+                  <Button size="sm" variant="secondary" icon="message-square-plus" loading={drawerBusy === "comment"} onClick={postComment}>Post</Button>
+                </div>
+              </div>
+            )}
+
+            {/* Vendor payment status (on completed work orders) */}
+            {detail?.assigneeStaffId && ["resolved", "closed"].includes(detail.status) && (
+              <div className="flex items-center justify-between rounded-xl border border-slate-200 p-4">
+                <div>
+                  <p className="text-sm font-medium text-slate-700">Vendor payment</p>
+                  <p className="text-xs text-slate-400">Total {formatINR(detail.totalCost ?? 0)}</p>
+                </div>
+                <select className={`${inputClass} w-36`} value={detail.paymentStatus || "pending"}
+                  onChange={async (e) => {
+                    try { await api.post(`/admin/helpdesk/tickets/${active.dbId}/payment-status`, { status: e.target.value }); toast("Payment status updated"); refreshDetail(); }
+                    catch (err) { toast(err.message || "Could not update", "error"); }
+                  }}>
+                  {["pending", "approved", "paid"].map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
             )}
 
             {/* Rate the vendor (once a vendor is assigned) */}

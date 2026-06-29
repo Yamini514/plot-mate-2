@@ -26,6 +26,8 @@ const reports = [
   { id: "RPT-2", name: "Delivery Report", desc: "Courier packages received, held and handed over to residents.", icon: "package", range: "Today", tone: "sky" },
   { id: "RPT-3", name: "Incident Report", desc: "Security incidents logged with severity, location and resolution status.", icon: "shield-alert", range: "Last 7 days", tone: "amber" },
   { id: "RPT-4", name: "Guard Activity Report", desc: "Shift attendance, patrol logs and gate actions per guard.", icon: "clipboard-check", range: "This month", tone: "violet" },
+  { id: "RPT-5", name: "Vehicle Log", desc: "Vehicles logged in and out at the gate with parking.", icon: "car", range: "Today", tone: "sky" },
+  { id: "RPT-6", name: "Rejected Entries", desc: "Visitors and entries that were rejected at the gate.", icon: "ban", range: "Last 7 days", tone: "amber" },
 ];
 
 const toneMap = {
@@ -61,6 +63,15 @@ const COLUMNS = {
   "RPT-4": [
     { key: "shift", label: "Shift" }, { key: "time", label: "Timing" },
     { key: "guard", label: "Guard" }, { key: "gate", label: "Gate" },
+  ],
+  "RPT-5": [
+    { key: "id", label: "ID" }, { key: "vehicleNo", label: "Vehicle" }, { key: "type", label: "Type" },
+    { key: "forWhom", label: "For" }, { key: "parking", label: "Parking" },
+    { key: "entry", label: "Entry" }, { key: "exit", label: "Exit" }, { key: "status", label: "Status" },
+  ],
+  "RPT-6": [
+    { key: "id", label: "ID" }, { key: "name", label: "Visitor" }, { key: "resident", label: "Resident" },
+    { key: "flat", label: "Flat" }, { key: "time", label: "When" },
   ],
 };
 
@@ -119,13 +130,17 @@ export default function Reports() {
   const { data: rv } = useApi("/guard/visitors", { page_size: 300 });
   const { data: rd } = useApi("/guard/deliveries", { page_size: 300 });
   const { data: ri } = useApi("/guard/incidents", { page_size: 300 });
+  const { data: rveh } = useApi("/guard/vehicles", { page_size: 300, status: "all" });
 
+  const visitors = normalizeList(rv);
   // Live rows mapped to each report's column keys.
   const DATASETS = {
-    "RPT-1": { columns: COLUMNS["RPT-1"], rows: normalizeList(rv).map((v) => ({ id: v.code, name: v.name, phone: v.phone, resident: v.residentName, flat: v.plotNo, purpose: v.purpose, checkIn: v.checkIn, status: v.status })) },
+    "RPT-1": { columns: COLUMNS["RPT-1"], rows: visitors.map((v) => ({ id: v.code, name: v.name, phone: v.phone, resident: v.residentName, flat: v.plotNo, purpose: v.purpose, checkIn: v.checkIn, status: v.status })) },
     "RPT-2": { columns: COLUMNS["RPT-2"], rows: normalizeList(rd).map((d) => ({ id: d.code, courier: d.courier, agent: d.agent, resident: d.residentName, flat: d.plotNo, received: d.receivedAt, delivered: d.deliveredAt, status: d.status })) },
     "RPT-3": { columns: COLUMNS["RPT-3"], rows: normalizeList(ri).map((i) => ({ id: i.code, type: i.type, location: i.location, severity: i.severity, reportedBy: i.reportedBy, time: i.occurredAt, status: i.status })) },
     "RPT-4": { columns: COLUMNS["RPT-4"], rows: [] },
+    "RPT-5": { columns: COLUMNS["RPT-5"], rows: normalizeList(rveh).map((v) => ({ id: v.code, vehicleNo: v.vehicleNo, type: v.vehicleType, forWhom: v.ownerKind === "owner" ? `Owner ${v.plotNo || ""}` : "Visitor", parking: v.parkingSlot, entry: v.entryAt, exit: v.exitAt, status: v.status })) },
+    "RPT-6": { columns: COLUMNS["RPT-6"], rows: visitors.filter((v) => v.status === "rejected").map((v) => ({ id: v.code, name: v.name, resident: v.residentName, flat: v.plotNo, time: v.checkIn || v.createdAt })) },
   };
 
   const [range, setRange] = useState("today");

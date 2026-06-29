@@ -21,6 +21,7 @@ import { CollectionTrendChart, StatusDonut } from "@/components/charts";
 import { useSettings } from "@/lib/useSettings";
 import { normalizeList } from "@/lib/api";
 import { useApi, useDeferred } from "@/lib/useApi";
+import { usePermissions } from "@/lib/usePermissions";
 import { formatINR } from "@/lib/utils";
 
 const activityIcon = {
@@ -35,16 +36,23 @@ const activityIcon = {
 export default function AdminDashboard() {
   const toast = useToast();
   const { settings } = useSettings();
-  // Primary, above-the-fold data — fetched immediately.
-  const { data: rep } = useApi("/admin/reports/overview");
-  const { data: ps } = useApi("/admin/plots/summary");
-  const { data: payList } = useApi("/admin/billing/payments", { page_size: 6 });
+  // RBAC: only fetch (and render) widgets the role can access — committee/staff
+  // see role-relevant widgets, and we avoid 403 spam on forbidden endpoints.
+  const { can } = usePermissions();
+  const seeFinance = can("reports.view") || can("finance.view") || can("payments.view");
+  const seePlots = can("plots.view");
+  const seePayments = can("payments.view");
+  const seeSecurity = can("support.view");
+  // Primary, above-the-fold data — fetched immediately (permission-gated).
+  const { data: rep } = useApi(seeFinance ? "/admin/reports/overview" : null);
+  const { data: ps } = useApi(seePlots ? "/admin/plots/summary" : null);
+  const { data: payList } = useApi(seePayments ? "/admin/billing/payments" : null, { page_size: 6 });
   // Secondary "security & gate" snapshot (below the fold) — deferred so it
   // doesn't compete with the KPIs above for the small backend connection pool.
   const ready = useDeferred(700);
-  const { data: incList } = useApi(ready ? "/admin/security/incidents" : null);
-  const { data: visList } = useApi(ready ? "/admin/visitors" : null, { page_size: 300 });
-  const { data: delList } = useApi(ready ? "/admin/deliveries" : null, { page_size: 300 });
+  const { data: incList } = useApi(ready && seeSecurity ? "/admin/security/incidents" : null);
+  const { data: visList } = useApi(ready && seeSecurity ? "/admin/visitors" : null, { page_size: 300 });
+  const { data: delList } = useApi(ready && seeSecurity ? "/admin/deliveries" : null, { page_size: 300 });
 
   const stats = {
     collectionRate: rep?.collection?.rate ?? 0,
@@ -219,69 +227,84 @@ export default function AdminDashboard() {
         </Link>
       </div>
 
-      {/* Stat tiles */}
+      {/* Stat tiles (permission-gated) */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Collection rate"
-          value={`${stats.collectionRate}%`}
-          icon="trending-up"
-          tone="brand"
-          delta={{ value: "+8.2%", up: true }}
-          hint={`${formatINR(stats.collected, { compact: true })} of ${formatINR(stats.target, { compact: true })}`}
-        />
-        <StatCard
-          label="Treasury balance"
-          value={formatINR(stats.treasuryBalance, { compact: true })}
-          icon="wallet"
-          tone="sky"
-          hint="Available funds"
-        />
-        <StatCard
-          label="Outstanding dues"
-          value={formatINR(stats.outstanding, { compact: true })}
-          icon="triangle-alert"
-          tone="amber"
-          delta={{ value: "-3.1%", up: false }}
-          hint={`${stats.pendingCount} plots pending`}
-        />
-        <StatCard
-          label="Plots registered"
-          value={`${totalPlots}`}
-          icon="map-pinned"
-          tone="violet"
-          hint={`${stats.paidCount} paid · ${stats.pendingCount} pending · ${stats.unknownCount} unknown`}
-        />
-      </div>
-
-      {/* Charts row */}
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader
-            title="Collections vs Expenses"
-            subtitle="Last 6 months"
-            icon="bar-chart-3"
-            action={<Badge tone="brand">FY {settings.fy}</Badge>}
+        {seeFinance && (
+          <StatCard
+            label="Collection rate"
+            value={`${stats.collectionRate}%`}
+            icon="trending-up"
+            tone="brand"
+            delta={{ value: "+8.2%", up: true }}
+            hint={`${formatINR(stats.collected, { compact: true })} of ${formatINR(stats.target, { compact: true })}`}
           />
-          <div className="p-4">
-            <CollectionTrendChart data={rep?.collectionTrend ?? []} />
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Payment status" subtitle={`All ${totalPlots} plots`} icon="pie-chart" />
-          <div className="p-4">
-            <StatusDonut
-              data={[
-                { name: "Paid", value: stats.paidCount, color: "#059669" },
-                { name: "Pending", value: stats.pendingCount, color: "#f59e0b" },
-                { name: "Unknown", value: stats.unknownCount, color: "#cbd5e1" },
-              ]}
-            />
-          </div>
-        </Card>
+        )}
+        {seeFinance && (
+          <StatCard
+            label="Treasury balance"
+            value={formatINR(stats.treasuryBalance, { compact: true })}
+            icon="wallet"
+            tone="sky"
+            hint="Available funds"
+          />
+        )}
+        {seeFinance && (
+          <StatCard
+            label="Outstanding dues"
+            value={formatINR(stats.outstanding, { compact: true })}
+            icon="triangle-alert"
+            tone="amber"
+            delta={{ value: "-3.1%", up: false }}
+            hint={`${stats.pendingCount} plots pending`}
+          />
+        )}
+        {seePlots && (
+          <StatCard
+            label="Plots registered"
+            value={`${totalPlots}`}
+            icon="map-pinned"
+            tone="violet"
+            hint={`${stats.paidCount} paid · ${stats.pendingCount} pending · ${stats.unknownCount} unknown`}
+          />
+        )}
       </div>
 
-      {/* Security & gate snapshot */}
+      {/* Charts row (permission-gated) */}
+      {(seeFinance || seePlots) && (
+        <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          {seeFinance && (
+            <Card className="lg:col-span-2">
+              <CardHeader
+                title="Collections vs Expenses"
+                subtitle="Last 6 months"
+                icon="bar-chart-3"
+                action={<Badge tone="brand">FY {settings.fy}</Badge>}
+              />
+              <div className="p-4">
+                <CollectionTrendChart data={rep?.collectionTrend ?? []} />
+              </div>
+            </Card>
+          )}
+
+          {seePlots && (
+            <Card>
+              <CardHeader title="Payment status" subtitle={`All ${totalPlots} plots`} icon="pie-chart" />
+              <div className="p-4">
+                <StatusDonut
+                  data={[
+                    { name: "Paid", value: stats.paidCount, color: "#059669" },
+                    { name: "Pending", value: stats.pendingCount, color: "#f59e0b" },
+                    { name: "Unknown", value: stats.unknownCount, color: "#cbd5e1" },
+                  ]}
+                />
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* Security & gate snapshot (permission-gated) */}
+      {seeSecurity && (
       <Card className="mt-6">
         <CardHeader
           title="Security & gate operations"
@@ -313,9 +336,12 @@ export default function AdminDashboard() {
           ))}
         </div>
       </Card>
+      )}
 
-      {/* Financial snapshot + activity */}
+      {/* Financial snapshot + activity (permission-gated) */}
+      {(seePayments || seeFinance) && (
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {seePayments && (
         <Card className="lg:col-span-2">
           <CardHeader
             title="Recent payments"
@@ -356,7 +382,9 @@ export default function AdminDashboard() {
             </tbody>
           </Table>
         </Card>
+        )}
 
+        {seeFinance && (
         <Card>
           <CardHeader title="Recent activity" icon="activity" />
           <div className="space-y-1 p-3">
@@ -376,9 +404,12 @@ export default function AdminDashboard() {
             ))}
           </div>
         </Card>
+        )}
       </div>
+      )}
 
-      {/* Collection progress */}
+      {/* Collection progress (permission-gated) */}
+      {seeFinance && (
       <Card className="mt-6 p-5">
         <div className="mb-3 flex items-center justify-between">
           <div>
@@ -396,6 +427,7 @@ export default function AdminDashboard() {
         </div>
         <Progress value={stats.collectionRate} />
       </Card>
+      )}
     </div>
   );
 }

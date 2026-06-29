@@ -6,6 +6,7 @@ import {
   Card,
   Button,
   Badge,
+  StatCard,
   StatusBadge,
   Segmented,
   Table,
@@ -21,7 +22,8 @@ import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatINR } from "@/lib/utils";
+import { WorkOrderMaterials } from "@/components/WorkOrderMaterials";
 
 const slaBadge = (t) => {
   if (t.slaState === "breached") return <Badge tone="rose"><Icon name="alarm-clock-off" size={11} /> {t.slaRemaining}</Badge>;
@@ -35,9 +37,12 @@ function WorkOrderDrawer({ dbId, onClose, onChanged }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null);
   const [note, setNote] = useState("");
+  const [labourCost, setLabourCost] = useState("");
   const [reason, setReason] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
   const [photoKind, setPhotoKind] = useState("before");
+  const [visitAt, setVisitAt] = useState("");
+  const [comment, setComment] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,7 +83,17 @@ function WorkOrderDrawer({ dbId, onClose, onChanged }) {
   };
   const complete = () => {
     if (!note.trim()) return toast("Add a completion note", "error");
-    return act(() => api.post(`/vendor/tickets/${dbId}/complete`, { completion_note: note.trim() }), "Marked complete");
+    return act(() => api.post(`/vendor/tickets/${dbId}/complete`, {
+      completion_note: note.trim(), labour_cost: labourCost === "" ? undefined : Number(labourCost),
+    }), "Marked complete");
+  };
+  const scheduleVisit = () => {
+    if (!visitAt) return toast("Pick a visit date", "error");
+    return act(() => api.post(`/vendor/tickets/${dbId}/schedule`, { scheduledVisitAt: visitAt }), "Visit scheduled");
+  };
+  const addComment = () => {
+    if (!comment.trim()) return toast("Write a comment", "error");
+    return act(async () => { await api.post(`/vendor/tickets/${dbId}/comment`, { body: comment.trim() }); setComment(""); }, "Comment added");
   };
   const addPhoto = () => {
     if (!photoUrl.trim()) return toast("Paste a photo URL", "error");
@@ -151,6 +166,24 @@ function WorkOrderDrawer({ dbId, onClose, onChanged }) {
             )}
           </div>
 
+          {/* schedule visit */}
+          {(canRespond || canStart || canWork) && (
+            <div className="flex items-end gap-2">
+              <Field label="Schedule site visit">
+                <input type="datetime-local" className={inputClass} value={visitAt} onChange={(e) => setVisitAt(e.target.value)} />
+              </Field>
+              <Button size="sm" variant="secondary" icon="calendar-clock" loading={busy === "Visit scheduled"} onClick={scheduleVisit}>Schedule</Button>
+            </div>
+          )}
+          {t.scheduledVisitAt && (
+            <p className="text-xs text-slate-500"><Icon name="calendar-clock" size={12} className="mr-1 inline" />Visit: {formatDate(t.scheduledVisitAt)}</p>
+          )}
+
+          {/* materials & labour cost */}
+          {(canWork || canStart) && (
+            <WorkOrderMaterials base="/vendor/tickets" ticketId={dbId} detail={t} onChanged={load} />
+          )}
+
           {/* completion note */}
           {t.completionNote && (
             <div>
@@ -158,6 +191,29 @@ function WorkOrderDrawer({ dbId, onClose, onChanged }) {
               <p className="text-sm text-slate-600">{t.completionNote}</p>
             </div>
           )}
+
+          {/* timeline + comments */}
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Timeline</p>
+            {(t.events?.length ?? 0) === 0 ? (
+              <p className="text-xs text-slate-400">No activity yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {t.events.map((e) => (
+                  <li key={e.id} className="flex gap-2 text-sm">
+                    <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500"><Icon name="dot" size={12} /></span>
+                    <div><p className="text-slate-700">{e.body}{e.internal ? <Badge tone="amber" className="ml-1.5">internal</Badge> : null}</p><p className="text-xs text-slate-400">{e.actorName || "system"} · {formatDate(e.createdAt)}</p></div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-2 flex items-end gap-2">
+              <Field label="Add a comment (internal)">
+                <input className={inputClass} placeholder="Note for the admin…" value={comment} onChange={(e) => setComment(e.target.value)} />
+              </Field>
+              <Button size="sm" variant="secondary" icon="message-square-plus" loading={busy === "Comment added"} onClick={addComment}>Post</Button>
+            </div>
+          </div>
 
           {/* actions by state */}
           {canRespond && (
@@ -182,6 +238,9 @@ function WorkOrderDrawer({ dbId, onClose, onChanged }) {
               <Field label="Completion note">
                 <textarea rows={3} className={inputClass} placeholder="What was done…" value={note} onChange={(e) => setNote(e.target.value)} />
               </Field>
+              <Field label="Labour cost (₹)">
+                <input type="number" min="0" className={inputClass} placeholder="0" value={labourCost} onChange={(e) => setLabourCost(e.target.value)} />
+              </Field>
               <Button icon="circle-check-big" loading={busy === "Marked complete"} onClick={complete}>Mark complete</Button>
             </div>
           )}
@@ -200,6 +259,7 @@ function WorkOrderDrawer({ dbId, onClose, onChanged }) {
 
 export default function VendorWorkOrdersPage() {
   const { data: raw, reload } = useApi("/vendor/tickets", { page_size: 300 });
+  const { data: perf } = useApi("/vendor/performance");
   const rows = normalizeList(raw);
   const [status, setStatus] = useState("active");
   const [activeId, setActiveId] = useState(null);
@@ -220,7 +280,15 @@ export default function VendorWorkOrdersPage() {
 
   return (
     <div className="animate-fade-in">
-      <PageHeader title="My Work Orders" subtitle="Jobs assigned to you — accept, work, and close them out" />
+      <PageHeader title="Dashboard" subtitle="Your assigned work, performance and pending jobs" />
+
+      {/* Performance + workload summary */}
+      <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard label="Active jobs" value={`${counts.active}`} icon="hammer" tone="amber" />
+        <StatCard label="Completed" value={`${perf?.completed ?? counts.resolved}`} icon="circle-check" tone="green" hint={perf?.onTimePct != null ? `${perf.onTimePct}% on-time` : undefined} />
+        <StatCard label="Avg rating" value={perf?.avgRating != null ? `${perf.avgRating}★` : "—"} icon="star" tone="violet" hint={perf?.ratingCount ? `${perf.ratingCount} ratings` : undefined} />
+        <StatCard label="Total billed" value={formatINR(perf?.totalBilled ?? 0, { compact: true })} icon="indian-rupee" tone="sky" />
+      </div>
 
       <Card className="mb-4 p-3">
         <Segmented

@@ -61,6 +61,33 @@ export default function VisitorManagement() {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanCode, setScanCode] = useState("");
+  const [scanResult, setScanResult] = useState(null);
+  const [scanning, setScanning] = useState(false);
+
+  const lookupPass = async () => {
+    if (!scanCode.trim()) return toast("Enter or scan a pass code", "error");
+    setScanning(true);
+    try {
+      const { data } = await api.get("/guard/visitors/lookup", { pass_code: scanCode.trim() });
+      setScanResult(data);
+    } catch (e) {
+      setScanResult(null);
+      toast(e.message || "No pass found", "error");
+    } finally { setScanning(false); }
+  };
+
+  const scanAction = async (action) => {
+    if (!scanResult) return;
+    setScanning(true);
+    try {
+      await api.post(`/guard/visitors/${scanResult.dbId ?? scanResult.id}/action`, { action });
+      toast(action === "checkin" ? "Entry logged" : action === "reject" ? "Entry rejected" : "Done");
+      setScanOpen(false); setScanResult(null); setScanCode(""); reload();
+    } catch (e) { toast(e.message || "Action failed", "error"); }
+    finally { setScanning(false); }
+  };
 
   // Register-form fields that drive (and are driven by) plot verification.
   const [flat, setFlat] = useState("");
@@ -178,6 +205,9 @@ export default function VisitorManagement() {
               toast("Visitor log exported as CSV");
             }}>
               Export
+            </Button>
+            <Button variant="secondary" icon="scan-line" onClick={() => { setScanOpen(true); setScanCode(""); setScanResult(null); }}>
+              Scan pass
             </Button>
             <Button icon="user-plus" onClick={() => setOpen(true)}>
               Register Visitor
@@ -342,6 +372,49 @@ export default function VisitorManagement() {
             The visitor stays in <strong>Pending</strong> until the resident approves the entry.
           </div>
         </form>
+      </Modal>
+
+      {/* Pass-code / QR lookup at the gate */}
+      <Modal
+        open={scanOpen}
+        onClose={() => setScanOpen(false)}
+        title="Scan visitor pass"
+        footer={
+          scanResult ? (
+            <>
+              <Button variant="secondary" icon="x" loading={scanning} onClick={() => scanAction("reject")}>Reject</Button>
+              <Button icon="log-in" loading={scanning} onClick={() => scanAction("checkin")}>Allow entry</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="secondary" onClick={() => setScanOpen(false)}>Cancel</Button>
+              <Button icon="search" loading={scanning} onClick={lookupPass}>Look up</Button>
+            </>
+          )
+        }
+      >
+        <div className="space-y-4">
+          <Field label="Pass code" hint="Scan the visitor's QR with your device, or type the code (e.g. GP-AB12CD).">
+            <input className={inputClass} value={scanCode} autoFocus
+              onChange={(e) => setScanCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === "Enter") lookupPass(); }}
+              placeholder="GP-XXXXXX" />
+          </Field>
+          {scanResult && (
+            <div className="rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between">
+                <p className="font-semibold text-slate-800">{scanResult.name}</p>
+                <StatusBadge status={scanResult.status} />
+              </div>
+              <dl className="mt-2 space-y-1 text-sm text-slate-600">
+                <div className="flex justify-between"><dt className="text-slate-400">Visiting</dt><dd>{scanResult.residentName || "—"} · Plot {scanResult.plotNo || "—"}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-400">Phone</dt><dd>{scanResult.phone || "—"}</dd></div>
+                <div className="flex justify-between"><dt className="text-slate-400">Purpose</dt><dd>{scanResult.purpose || "—"}</dd></div>
+                {scanResult.expectedOn && <div className="flex justify-between"><dt className="text-slate-400">Expected</dt><dd>{scanResult.expectedOn}</dd></div>}
+              </dl>
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   );

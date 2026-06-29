@@ -9,6 +9,7 @@ import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
 import { useApi, useDebounced } from "@/lib/useApi";
 import { useListControls } from "@/lib/useList";
+import { usePermissions } from "@/lib/usePermissions";
 import { useToast } from "@/components/Toast";
 import { formatINR, formatDate } from "@/lib/utils";
 import { number as vnumber, text as vtext, collect, hasErrors } from "@/lib/validate";
@@ -34,6 +35,8 @@ export function PaymentsPanel() {
 
 function PaymentsView() {
   const toast = useToast();
+  const { can } = usePermissions();
+  const canApprove = can("payments.approve");
   const [verification, setVerification] = useState("all");
   const [search, setSearch] = useState("");
   const c = useListControls();
@@ -133,13 +136,16 @@ function PaymentsView() {
               </Td>
               <Td>
                 <div className="flex justify-end gap-1.5">
-                  {p.verificationStatus === "pending" && (
+                  {p.verificationStatus === "pending" && canApprove && (
                     <>
                       <Button size="sm" icon="check" loading={busyId === p.dbId} onClick={() => verify(p)}>Verify</Button>
                       <Button size="sm" variant="secondary" icon="x" onClick={() => { setRejectFor(p); setReason(""); }}>Reject</Button>
                     </>
                   )}
-                  {p.verificationStatus === "verified" && (
+                  {p.verificationStatus === "pending" && !canApprove && (
+                    <span className="text-xs text-slate-400">awaiting approver</span>
+                  )}
+                  {p.verificationStatus === "verified" && canApprove && (
                     <Button size="sm" variant="ghost" icon="rotate-ccw" onClick={() => { setRefundFor(p); setErrors({}); setRefund({ amount: String(p.amount), reason: "", method: "bank" }); }}>Refund</Button>
                   )}
                 </div>

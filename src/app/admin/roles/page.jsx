@@ -9,20 +9,13 @@ import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 
-// Friendly labels for permission keys (App::Models::Role::PERMISSIONS).
-const PERM_LABEL = {
-  "billing.manage": "Billing & invoices",
-  "treasury.manage": "Treasury",
-  "approvals.review": "Review approvals",
-  "documents.manage": "Documents",
-  "tickets.manage": "Helpdesk tickets",
-  "maintenance.manage": "Maintenance",
-  "projects.manage": "Projects",
-  "announcements.publish": "Announcements",
-  "members.manage": "Members & owners",
-  "staff.manage": "Staff & vendors",
-  "settings.manage": "Settings",
-  "security.manage": "Security & gate",
+// Friendly labels for permission modules (App::Models::Role::MODULES keys).
+const MODULE_LABEL = {
+  dashboard: "Dashboard", plots: "Plots", owners: "Owners", committee: "Committee",
+  vendors: "Vendors", workorders: "Work Orders", complaints: "Complaints",
+  maintenance: "Maintenance", payments: "Payments", finance: "Finance",
+  projects: "Projects", documents: "Documents", notices: "Notices & Community",
+  reports: "Reports", settings: "Settings", support: "Support & Gate", analytics: "Analytics",
 };
 
 // key = backend (snake) form sent on save; camel = how the API returns it after
@@ -40,7 +33,8 @@ export default function RolesPage() {
   const toast = useToast();
   const { data: raw, meta, reload } = useApi("/admin/roles");
   const roles = normalizeList(raw);
-  const catalogue = meta?.catalogue ?? Object.keys(PERM_LABEL);
+  // module → [actions] grid from the backend catalogue (drives the editor).
+  const modules = meta?.modules ?? {};
 
   const { data: settings, reload: reloadSettings } = useApi("/admin/settings");
 
@@ -49,6 +43,27 @@ export default function RolesPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [usersFor, setUsersFor] = useState(null); // role whose members are shown
+  const { data: roleUsers } = useApi(usersFor ? `/admin/roles/${usersFor.dbId}/users` : null);
+
+  const cloneRole = async (r) => {
+    setBusyId(r.dbId);
+    try { await api.post(`/admin/roles/${r.dbId}/clone`, {}); toast("Role cloned"); reload(); }
+    catch (e) { toast(e.message || "Could not clone", "error"); }
+    finally { setBusyId(null); }
+  };
+  const toggleRole = async (r) => {
+    setBusyId(r.dbId);
+    try { await api.post(`/admin/roles/${r.dbId}/toggle`, {}); toast(r.active === false ? "Role activated" : "Role deactivated"); reload(); }
+    catch (e) { toast(e.message || "Could not update", "error"); }
+    finally { setBusyId(null); }
+  };
+  const toggleModuleAll = (mod, actions) => {
+    const keys = actions.map((a) => `${mod}.${a}`);
+    const allOn = keys.every((k) => form.permissions.includes(k));
+    setForm((f) => ({ ...f, permissions: allOn ? f.permissions.filter((p) => !keys.includes(p)) : [...new Set([...f.permissions, ...keys])] }));
+  };
 
   // Approval matrix (request type → approver role name), seeded from settings.
   const [matrix, setMatrix] = useState({});
@@ -129,15 +144,17 @@ export default function RolesPage() {
                     {r.description && <p className="text-xs text-slate-500">{r.description}</p>}
                   </div>
                   <div className="flex gap-1">
-                    <button onClick={() => openEdit(r)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><Icon name="pencil" size={15} /></button>
-                    <button onClick={() => setConfirmDelete(r)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash-2" size={15} /></button>
+                    <button title="View members" onClick={() => setUsersFor(r)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><Icon name="users" size={15} /></button>
+                    <button title="Clone" disabled={busyId === r.dbId} onClick={() => cloneRole(r)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><Icon name="copy" size={15} /></button>
+                    <button title={r.active === false ? "Activate" : "Deactivate"} disabled={busyId === r.dbId} onClick={() => toggleRole(r)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><Icon name={r.active === false ? "toggle-left" : "toggle-right"} size={15} /></button>
+                    <button title="Edit" onClick={() => openEdit(r)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><Icon name="pencil" size={15} /></button>
+                    <button title="Delete" onClick={() => setConfirmDelete(r)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash-2" size={15} /></button>
                   </div>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {(r.permissions ?? []).length === 0 && <span className="text-xs text-slate-400">No permissions set</span>}
-                  {(r.permissions ?? []).map((p) => (
-                    <Badge key={p} tone="slate">{PERM_LABEL[p] ?? p}</Badge>
-                  ))}
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  {r.active === false && <Badge tone="slate">inactive</Badge>}
+                  <span>{(r.permissions ?? []).length} permission{(r.permissions ?? []).length === 1 ? "" : "s"}</span>
+                  <span>· {r.userCount ?? 0} member{(r.userCount ?? 0) === 1 ? "" : "s"}</span>
                 </div>
               </Card>
             ))}
@@ -191,20 +208,34 @@ export default function RolesPage() {
             <Field label="Description"><input className={inputClass} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Optional" /></Field>
           </div>
           <div>
-            <span className="mb-1.5 block text-xs font-medium text-slate-600">Responsibilities</span>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {catalogue.map((p) => {
-                const on = form.permissions.includes(p);
+            <span className="mb-1.5 block text-xs font-medium text-slate-600">Permissions — pick the actions this role can perform in each module</span>
+            <div className="max-h-[50vh] space-y-2 overflow-y-auto rounded-lg border border-slate-100 p-2">
+              {Object.entries(modules).map(([mod, actions]) => {
+                const keys = actions.map((a) => `${mod}.${a}`);
+                const allOn = keys.every((k) => form.permissions.includes(k));
+                const someOn = keys.some((k) => form.permissions.includes(k));
                 return (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => togglePerm(p)}
-                    className={"flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ring-1 ring-inset transition-colors " + (on ? "bg-brand-50 text-brand-700 ring-brand-300" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50")}
-                  >
-                    <Icon name={on ? "check-square" : "square"} size={15} className={on ? "text-brand-600" : "text-slate-400"} />
-                    {PERM_LABEL[p] ?? p}
-                  </button>
+                  <div key={mod} className="rounded-lg p-2 hover:bg-slate-50">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-sm font-medium capitalize text-slate-700">{MODULE_LABEL[mod] ?? mod}</span>
+                      <button type="button" onClick={() => toggleModuleAll(mod, actions)}
+                        className={"text-xs font-medium " + (allOn ? "text-rose-500" : "text-brand-600")}>
+                        {allOn ? "Clear" : someOn ? "Select all" : "Select all"}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {actions.map((a) => {
+                        const k = `${mod}.${a}`;
+                        const on = form.permissions.includes(k);
+                        return (
+                          <button key={k} type="button" onClick={() => togglePerm(k)}
+                            className={"rounded-full px-2.5 py-1 text-xs ring-1 ring-inset transition-colors " + (on ? "bg-brand-50 text-brand-700 ring-brand-300" : "bg-white text-slate-500 ring-slate-200 hover:bg-slate-50")}>
+                            {a}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -219,6 +250,22 @@ export default function RolesPage() {
         title="Delete role"
         message={`Delete the "${confirmDelete?.name}" role? Any approval routing using it falls back to Admin.`}
       />
+
+      <Modal open={!!usersFor} onClose={() => setUsersFor(null)} title={`Members · ${usersFor?.name ?? ""}`}
+        footer={<Button onClick={() => setUsersFor(null)}>Done</Button>}>
+        {normalizeList(roleUsers).length === 0 ? (
+          <p className="py-4 text-center text-sm text-slate-400">No members assigned to this role yet.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {normalizeList(roleUsers).map((u) => (
+              <li key={u.id} className="flex items-center justify-between py-2.5">
+                <div><p className="text-sm font-medium text-slate-800">{u.fullName}</p><p className="text-xs text-slate-400">{u.email}</p></div>
+                <Badge tone={u.active ? "green" : "slate"}>{u.active ? "active" : "inactive"}</Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
     </div>
   );
 }

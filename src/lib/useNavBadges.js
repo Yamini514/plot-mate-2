@@ -16,6 +16,7 @@ export function useNavBadges(role) {
   const admin = role === "admin";
   const guard = role === "guard";
   const member = role === "member";
+  const vendor = role === "vendor";
   const ready = useDeferred(800);
 
   // Admin — unpaid invoices, open tickets, open complaints.
@@ -26,11 +27,15 @@ export function useNavBadges(role) {
   // Guard — expected visitors at the gate, deliveries awaiting pickup.
   const { data: gVisitors } = useApi(guard && ready ? "/guard/visitors" : null, { page_size: 300 });
   const { data: gDeliveries } = useApi(guard && ready ? "/guard/deliveries" : null, { page_size: 300 });
+  const { data: gNotif } = useApi(guard && ready ? "/guard/notifications/unread" : null);
 
   // Member — visitor pre-approvals awaiting the resident's decision.
   const { data: mVisitors } = useApi(member && ready ? "/member/visitors" : null, { page_size: 300 });
   // Member — unread notifications.
   const { data: mNotif } = useApi(member && ready ? "/member/notifications/unread" : null);
+  // Vendor — active work orders + unread notifications.
+  const { data: vTickets } = useApi(vendor && ready ? "/vendor/tickets" : null, { page_size: 300 });
+  const { data: vNotif } = useApi(vendor && ready ? "/vendor/notifications/unread" : null);
 
   const badges = {};
 
@@ -47,6 +52,7 @@ export function useNavBadges(role) {
     const d = Array.isArray(gDeliveries) ? gDeliveries : [];
     const waiting = d.filter((x) => ["waiting", "received"].includes(x.status)).length;
     if (waiting) badges["/guard/deliveries"] = waiting;
+    if (gNotif?.count) badges["/guard/notifications"] = gNotif.count;
   }
 
   if (member) {
@@ -54,6 +60,13 @@ export function useNavBadges(role) {
     const pending = v.filter((x) => x.status === "pending").length;
     if (pending) badges["/member/visitors"] = pending;
     if (mNotif?.count) badges["/member/notifications"] = mNotif.count;
+  }
+
+  if (vendor) {
+    const t = Array.isArray(vTickets) ? vTickets : [];
+    const active = t.filter((x) => ["assigned", "accepted", "in_progress", "escalated", "reopened"].includes(x.status)).length;
+    if (active) badges["/vendor"] = active;
+    if (vNotif?.count) badges["/vendor/notifications"] = vNotif.count;
   }
 
   return badges;

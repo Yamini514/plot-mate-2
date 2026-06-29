@@ -13,11 +13,16 @@ import {
   Avatar,
   EmptyState,
   ConfirmDialog,
+  Field,
+  PasswordInput,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { useApi } from "@/lib/useApi";
 import { useAuth } from "@/lib/auth";
+import { api } from "@/lib/api";
+import { AvatarUpload } from "@/components/AvatarUpload";
+import { password as validatePassword } from "@/lib/validate";
 import { shiftForNow, isBeforeShiftEnd, fmtClock } from "@/lib/shift";
 
 function InfoRow({ icon, label, value }) {
@@ -75,6 +80,19 @@ export default function GuardProfile() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [endingEarly, setEndingEarly] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
+  const [savingPw, setSavingPw] = useState(false);
+
+  const changePassword = async () => {
+    if (!pw.current) return toast("Enter your current password", "error");
+    const err = validatePassword(pw.next);
+    if (err) return toast(err, "error");
+    if (pw.next !== pw.confirm) return toast("Passwords don't match", "error");
+    setSavingPw(true);
+    try { await api.put("/me/update-password", { currentPassword: pw.current, newPassword: pw.next }); setPw({ current: "", next: "", confirm: "" }); toast("Password updated"); }
+    catch (e) { toast(e.message || "Could not update password", "error"); }
+    finally { setSavingPw(false); }
+  };
 
   const requestEndShift = () => {
     setEndingEarly(isBeforeShiftEnd());
@@ -126,6 +144,21 @@ export default function GuardProfile() {
             >
               End Shift
             </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Account: avatar + change password */}
+      <Card className="mb-6">
+        <CardHeader title="My account" subtitle="Photo and password" icon="circle-user" />
+        <div className="grid gap-5 p-5 sm:grid-cols-2">
+          <AvatarUpload value={me?.avatarUrl} name={profile.name}
+            onChange={async (url) => { try { await api.put("/me/profile", { avatarUrl: url }); toast("Photo updated"); } catch (e) { toast(e.message, "error"); } }} />
+          <div className="space-y-3">
+            <Field label="Current password"><PasswordInput value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} autoComplete="current-password" /></Field>
+            <Field label="New password" hint="8+ chars with upper, lower, number & special character"><PasswordInput value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} /></Field>
+            <Field label="Confirm new password"><PasswordInput value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></Field>
+            <div className="flex justify-end"><Button icon="key-round" loading={savingPw} onClick={changePassword}>Update password</Button></div>
           </div>
         </div>
       </Card>
