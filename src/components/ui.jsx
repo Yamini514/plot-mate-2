@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { Icon } from "./Icon";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /* ---------------- Card ---------------- */
 export function Card({ className, children }) {
@@ -235,6 +235,98 @@ export function QuickActionButton({ label, icon, tone = "brand", onClick, hint }
         {hint && <span className="block truncate text-xs text-slate-400">{hint}</span>}
       </span>
     </button>
+  );
+}
+
+/* ---------------- ActionMenu (kebab / 3-dots row actions) ----------------
+   Collapses a row's action buttons into a single "⋮" trigger. Pass an `items`
+   array — falsy entries are dropped, so conditional actions compose with
+   `cond && { label, icon, onClick }`. Each item: { label, icon, onClick, tone,
+   disabled, loading }. tone:"danger" styles destructive items.
+   The popover is position:fixed (anchored to the trigger) so it is never
+   clipped by the table's overflow-x-auto scroll container. */
+export function ActionMenu({ items = [], label = "Actions", className }) {
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+  const btnRef = useRef(null);
+
+  const visible = items.filter(Boolean);
+
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btnRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const width = 192; // matches min-w below
+      setCoords({ top: r.bottom + 6, left: Math.max(8, r.right - width) });
+    };
+    place();
+    const close = () => setOpen(false);
+    const onKey = (e) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (visible.length === 0) return null;
+
+  return (
+    <div className={cn("flex justify-end", className)} onClick={(e) => e.stopPropagation()}>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400",
+          open && "bg-slate-100 text-slate-600",
+        )}
+      >
+        <Icon name="ellipsis-vertical" size={18} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            style={{ top: coords.top, left: coords.left }}
+            className="fixed z-50 min-w-48 animate-fade-in overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+          >
+            {visible.map((it, i) => (
+              <button
+                key={i}
+                type="button"
+                role="menuitem"
+                disabled={it.disabled || it.loading}
+                onClick={() => { setOpen(false); it.onClick?.(); }}
+                className={cn(
+                  "flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                  it.tone === "danger"
+                    ? "text-rose-600 hover:bg-rose-50"
+                    : "text-slate-700 hover:bg-slate-50",
+                )}
+              >
+                <span className="grid w-4 place-items-center">
+                  {it.loading ? (
+                    <Icon name="loader-circle" size={15} className="animate-spin" />
+                  ) : it.icon ? (
+                    <Icon name={it.icon} size={15} className={it.tone === "danger" ? "" : "text-slate-400"} />
+                  ) : null}
+                </span>
+                {it.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

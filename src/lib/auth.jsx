@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 import { api, apiEnabled, setToken } from "./api";
+import { clearApiCache } from "./useApi";
 
 export const DEMO_ACCOUNTS = [
   {
@@ -110,6 +111,7 @@ export function AuthProvider({ children }) {
     else setToken(null);
     setUser(null);
     localStorage.removeItem(STORAGE_KEY);
+    clearApiCache(); // don't let the next account (same tab) read cached data
     return result;
   };
 

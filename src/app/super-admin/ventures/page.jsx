@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, ConfirmDialog, Pagination,
+  PageHeader, Card, Badge, Segmented, Table, Th, SortTh, Td, Tr, ConfirmDialog, Pagination, ActionMenu,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
@@ -100,17 +100,14 @@ export default function VenturesPage() {
                   <Badge tone={v.status === "active" ? "green" : "rose"}>{v.status}</Badge>
                 </Td>
                 <Td>
-                  <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
-                    {v.status === "active" ? (
-                      <Button variant="secondary" icon="pause" onClick={() => setSuspend(v)}>
-                        Suspend
-                      </Button>
-                    ) : (
-                      <Button icon="play" loading={busyId === v.dbId} onClick={() => setStatus(v, "activate")}>
-                        Activate
-                      </Button>
-                    )}
-                  </div>
+                  <ActionMenu
+                    items={[
+                      v.status === "active"
+                        ? { label: "Suspend", icon: "pause", onClick: () => setSuspend(v) }
+                        : { label: "Activate", icon: "play", loading: busyId === v.dbId, onClick: () => setStatus(v, "activate") },
+                      { label: "View details", icon: "arrow-right", onClick: () => router.push(`/super-admin/ventures/${v.dbId}`) },
+                    ]}
+                  />
                 </Td>
               </Tr>
             ))}

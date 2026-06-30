@@ -62,7 +62,6 @@ const SECURITY_OPTIONS = [
 
 const initialChannels = [
   { label: "WhatsApp reminders", desc: "Send dues reminders via WhatsApp", on: true },
-  { label: "SMS alerts", desc: "Critical alerts over SMS", on: true },
   { label: "Email digests", desc: "Weekly treasury summary by email", on: false },
   { label: "Payment confirmations", desc: "Auto-notify on payment received", on: true },
 ];

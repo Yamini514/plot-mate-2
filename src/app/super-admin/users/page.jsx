@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import {
-  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, Modal, Field, inputClass, Pagination,
+  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, Modal, Field, inputClass, Pagination, ActionMenu,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
@@ -127,14 +127,14 @@ export default function PlatformUsersPage() {
                   )}
                 </Td>
                 <Td>
-                  <div className="flex justify-end gap-1.5">
-                    <Button variant="secondary" icon="key-round" loading={busyId === u.dbId} onClick={() => resetPw(u)}>Reset</Button>
-                    {u.active ? (
-                      <Button variant="secondary" icon="ban" onClick={() => { setBlock(u); setReason(""); }}>Block</Button>
-                    ) : (
-                      <Button icon="circle-check" loading={busyId === u.dbId} onClick={() => unblock(u)}>Unblock</Button>
-                    )}
-                  </div>
+                  <ActionMenu
+                    items={[
+                      { label: "Reset password", icon: "key-round", loading: busyId === u.dbId, onClick: () => resetPw(u) },
+                      u.active
+                        ? { label: "Block", icon: "ban", tone: "danger", onClick: () => { setBlock(u); setReason(""); } }
+                        : { label: "Unblock", icon: "circle-check", loading: busyId === u.dbId, onClick: () => unblock(u) },
+                    ]}
+                  />
                 </Td>
               </Tr>
             ))}

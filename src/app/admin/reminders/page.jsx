@@ -22,7 +22,6 @@ import { cn } from "@/lib/utils";
 
 const channels = [
   { id: "whatsapp", label: "WhatsApp", icon: "message-circle" },
-  { id: "sms", label: "SMS", icon: "smartphone" },
   { id: "email", label: "Email", icon: "mail" },
 ];
 

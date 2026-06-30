@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import {
-  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, Modal, Pagination,
+  PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr, Modal, Pagination, ActionMenu,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
@@ -103,14 +103,14 @@ export default function VentureAdminsPage() {
                 <Td className="text-slate-500">{a.lastLoggedInAt ? formatDate(a.lastLoggedInAt) : "—"}</Td>
                 <Td><Badge tone={a.active ? "green" : "slate"}>{a.active ? "active" : "inactive"}</Badge></Td>
                 <Td>
-                  <div className="flex justify-end gap-1.5">
-                    <Button variant="secondary" icon="key-round" onClick={() => setReset(a)}>Reset</Button>
-                    {a.active ? (
-                      <Button variant="secondary" icon="user-x" loading={busyId === a.dbId} onClick={() => toggle(a)}>Deactivate</Button>
-                    ) : (
-                      <Button icon="user-check" loading={busyId === a.dbId} onClick={() => toggle(a)}>Activate</Button>
-                    )}
-                  </div>
+                  <ActionMenu
+                    items={[
+                      { label: "Reset password", icon: "key-round", onClick: () => setReset(a) },
+                      a.active
+                        ? { label: "Deactivate", icon: "user-x", loading: busyId === a.dbId, onClick: () => toggle(a) }
+                        : { label: "Activate", icon: "user-check", loading: busyId === a.dbId, onClick: () => toggle(a) },
+                    ]}
+                  />
                 </Td>
               </Tr>
             ))}
