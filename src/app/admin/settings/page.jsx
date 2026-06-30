@@ -15,10 +15,11 @@ import {
 import { Icon } from "@/components/Icon";
 import { PaymentQr } from "@/components/PaymentQr";
 import { useToast } from "@/components/Toast";
-import { api } from "@/lib/api";
+import { api, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { buildUpiUri } from "@/lib/payments";
 import { ListsEditor } from "./ListsEditor";
+import { text as vtext, email as vemail, number as vnumber, collect, hasErrors } from "@/lib/validate";
 
 // Indian financial year (Apr 1 – Mar 31), e.g. "2026–27".
 function currentFY() {
@@ -95,6 +96,7 @@ export default function SettingsPage() {
   const [tab, setTab] = useState("association");
   const [channels, setChannels] = useState(initialChannels);
   const [form, setForm] = useState(null);
+  const [errors, setErrors] = useState({});
 
   useEffect(() => {
     if (live && !form) {
@@ -249,6 +251,26 @@ export default function SettingsPage() {
     setChannels((prev) => prev.map((c, idx) => (idx === i ? { ...c, on: !c.on } : c)));
 
   const save = async () => {
+    const errs = collect({
+      name: vtext(f.name, { min: 2, max: 160, label: "Name" }),
+      totalPlots: vnumber(f.totalPlots, { min: 0, integer: true, required: false, label: "Total plots" }),
+      ratePerSqyd: (f.basePayMode ?? "per_sqyd") !== "per_plot" ? vnumber(f.ratePerSqyd, { min: 0, required: false, label: "Rate per sqyd" }) : "",
+      basePayFlat: (f.basePayMode ?? "per_sqyd") === "per_plot" ? vnumber(f.basePayFlat, { min: 0, required: false, label: "Flat base pay" }) : "",
+      membershipFee: vnumber(f.membershipFee, { min: 0, required: false, label: "Membership fee" }),
+      latePenaltyPct: vnumber(f.latePenaltyPct, { min: 0, max: 100, required: false, label: "Late penalty" }),
+      penaltyGraceDays: vnumber(f.penaltyGraceDays, { min: 0, integer: true, required: false, label: "Penalty grace" }),
+      interestPercentMonthly: vnumber(f.interestPercentMonthly, { min: 0, required: false, label: "Monthly interest" }),
+      smtpFromEmail: vemail(f.smtpFromEmail, { required: false }),
+      smtpHost: f.smtpEnabled ? vtext(f.smtpHost, { label: "SMTP host" }) : "",
+      smtpPort: f.smtpEnabled ? vnumber(f.smtpPort, { min: 1, max: 65535, integer: true, label: "Port" }) : vnumber(f.smtpPort, { min: 1, max: 65535, integer: true, required: false, label: "Port" }),
+      smtpUsername: f.smtpEnabled ? vtext(f.smtpUsername, { label: "Username" }) : "",
+      waPhoneNumberId: f.waEnabled ? vtext(f.waPhoneNumberId, { label: "Phone number ID" }) : "",
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) {
+      toast("Please fix the highlighted fields", "error");
+      return;
+    }
     try {
       await api.put("/admin/settings", {
         name: f.name, type: f.type, registrationNo: f.registrationNo, location: f.location,
@@ -300,9 +322,12 @@ export default function SettingsPage() {
         smtpPassword: "", smtpPasswordSet: p.smtpPasswordSet || !!p.smtpPassword,
         waAccessToken: "", waAccessTokenSet: p.waAccessTokenSet || !!p.waAccessToken,
       }));
+      setErrors({});
       toast("Settings saved");
     } catch (e) {
-      toast(e.message || "Could not save settings", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not save settings", "error");
     }
   };
 
@@ -339,7 +364,7 @@ export default function SettingsPage() {
             <Card>
               <CardHeader title="Association profile" icon="building" />
               <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
-                <Field label="Name">
+                <Field label="Name" error={errors.name}>
                   <input className={inputClass} value={f.name ?? ""} onChange={(e) => set("name", e.target.value)} />
                 </Field>
                 <Field label="Type">
@@ -348,7 +373,7 @@ export default function SettingsPage() {
                 <Field label="Registration number">
                   <input className={inputClass} value={f.registrationNo ?? ""} onChange={(e) => set("registrationNo", e.target.value)} />
                 </Field>
-                <Field label="Total plots">
+                <Field label="Total plots" error={errors.totalPlots}>
                   <input type="number" className={inputClass} value={f.totalPlots ?? ""} onChange={(e) => set("totalPlots", e.target.value)} />
                 </Field>
                 <Field label="Financial year">
@@ -398,24 +423,24 @@ export default function SettingsPage() {
 
                 <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   {(f.basePayMode ?? "per_sqyd") === "per_plot" ? (
-                    <Field label="Flat base pay per plot (₹)" hint="Charged to every plot when you apply base pay">
+                    <Field label="Flat base pay per plot (₹)" hint="Charged to every plot when you apply base pay" error={errors.basePayFlat}>
                       <input type="number" min="0" className={inputClass} value={f.basePayFlat ?? ""} onChange={(e) => set("basePayFlat", e.target.value)} placeholder="e.g. 6000" />
                     </Field>
                   ) : (
-                    <Field label="Rate per sqyd / year (₹)" hint="Multiplied by each plot's size">
+                    <Field label="Rate per sqyd / year (₹)" hint="Multiplied by each plot's size" error={errors.ratePerSqyd}>
                       <input type="number" min="0" className={inputClass} value={f.ratePerSqyd ?? ""} onChange={(e) => set("ratePerSqyd", e.target.value)} placeholder="e.g. 30" />
                     </Field>
                   )}
-                  <Field label="One-time membership fee (₹)">
+                  <Field label="One-time membership fee (₹)" error={errors.membershipFee}>
                     <input type="number" className={inputClass} value={f.membershipFee ?? ""} onChange={(e) => set("membershipFee", e.target.value)} />
                   </Field>
-                  <Field label="Late payment penalty (%)">
+                  <Field label="Late payment penalty (%)" error={errors.latePenaltyPct}>
                     <input type="number" className={inputClass} value={f.latePenaltyPct ?? ""} onChange={(e) => set("latePenaltyPct", e.target.value)} />
                   </Field>
-                  <Field label="Penalty grace (days)" hint="Days overdue before a late fee applies.">
+                  <Field label="Penalty grace (days)" hint="Days overdue before a late fee applies." error={errors.penaltyGraceDays}>
                     <input type="number" min="0" className={inputClass} value={f.penaltyGraceDays ?? ""} onChange={(e) => set("penaltyGraceDays", e.target.value)} />
                   </Field>
-                  <Field label="Monthly interest on overdue (%)" hint="0 disables interest accrual.">
+                  <Field label="Monthly interest on overdue (%)" hint="0 disables interest accrual." error={errors.interestPercentMonthly}>
                     <input type="number" min="0" step="0.1" className={inputClass} value={f.interestPercentMonthly ?? ""} onChange={(e) => set("interestPercentMonthly", e.target.value)} />
                   </Field>
                   <Field label="Due date">
@@ -611,17 +636,17 @@ export default function SettingsPage() {
                   <Field label="From name" hint="Shown as the sender">
                     <input className={inputClass} value={f.smtpFromName ?? ""} onChange={(e) => set("smtpFromName", e.target.value)} placeholder={f.name || "Your Association"} />
                   </Field>
-                  <Field label="From email">
+                  <Field label="From email" error={errors.smtpFromEmail}>
                     <input type="email" className={inputClass} value={f.smtpFromEmail ?? ""} onChange={(e) => set("smtpFromEmail", e.target.value)} placeholder="noreply@yourdomain.com" />
                   </Field>
                 </div>
 
                 {/* Server */}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="SMTP host">
+                  <Field label="SMTP host" error={errors.smtpHost}>
                     <input className={inputClass} value={f.smtpHost ?? ""} onChange={(e) => set("smtpHost", e.target.value)} placeholder="smtp.yourprovider.com" />
                   </Field>
-                  <Field label="Port">
+                  <Field label="Port" error={errors.smtpPort}>
                     <input type="number" className={inputClass} value={f.smtpPort ?? ""} onChange={(e) => set("smtpPort", e.target.value)} placeholder="587" />
                   </Field>
                   <Field label="Security">
@@ -629,7 +654,7 @@ export default function SettingsPage() {
                       {SECURITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                   </Field>
-                  <Field label="Username">
+                  <Field label="Username" error={errors.smtpUsername}>
                     <input className={inputClass} value={f.smtpUsername ?? ""} onChange={(e) => set("smtpUsername", e.target.value)} placeholder="full email or API user" autoComplete="off" />
                   </Field>
                   <div className="sm:col-span-2">
@@ -734,7 +759,7 @@ export default function SettingsPage() {
 
                 {/* API credentials */}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <Field label="Phone number ID" hint="WhatsApp Manager → API setup">
+                  <Field label="Phone number ID" hint="WhatsApp Manager → API setup" error={errors.waPhoneNumberId}>
                     <input className={inputClass} value={f.waPhoneNumberId ?? ""} onChange={(e) => set("waPhoneNumberId", e.target.value)} placeholder="e.g. 1132631029938612" autoComplete="off" />
                   </Field>
                   <Field label="Business Account ID (WABA)" hint="For reference / template management">

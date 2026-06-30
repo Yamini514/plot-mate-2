@@ -15,10 +15,11 @@ import {
   inputClass,
   ConfirmDialog,
 } from "@/components/ui";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
+import { text as vtext, collect, hasErrors } from "@/lib/validate";
 
 const emptyForm = { question: "", description: "", options: "Yes\nNo\nNeed more details", closesAt: "" };
 
@@ -38,14 +39,17 @@ export default function AdminPollsPage() {
   const [busyId, setBusyId] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [errors, setErrors] = useState({});
 
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
+    setErrors({});
     setOpen(true);
   };
   const openEdit = (p) => {
     setEditing(p);
+    setErrors({});
     setForm({
       question: p.question ?? "",
       description: p.description ?? "",
@@ -59,10 +63,9 @@ export default function AdminPollsPage() {
     if (editing) {
       // Editing keeps the existing options/votes intact — only the wording,
       // description and closing date change.
-      if (!form.question.trim()) {
-        toast("Question is required", "error");
-        return;
-      }
+      const errs = collect({ question: vtext(form.question, { min: 2, label: "Question" }) });
+      setErrors(errs);
+      if (hasErrors(errs)) return;
       setSaving(true);
       try {
         await api.put(`/admin/polls/${editing.dbId}`, {
@@ -76,7 +79,9 @@ export default function AdminPollsPage() {
         setOpen(false);
         reload();
       } catch (e) {
-        toast(e.message || "Could not update poll", "error");
+        const fe = fieldErrors(e);
+        if (hasErrors(fe)) setErrors(fe);
+        else toast(e.message || "Could not update poll", "error");
       } finally {
         setSaving(false);
       }
@@ -87,10 +92,12 @@ export default function AdminPollsPage() {
       .split("\n")
       .map((o) => o.trim())
       .filter(Boolean);
-    if (!form.question.trim() || opts.length < 2) {
-      toast("Add a question and at least 2 options", "error");
-      return;
-    }
+    const errs = collect({
+      question: vtext(form.question, { min: 2, label: "Question" }),
+      options: opts.length < 2 ? "Add at least 2 options" : "",
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       await api.post("/admin/polls", {
@@ -105,7 +112,9 @@ export default function AdminPollsPage() {
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not launch poll", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not launch poll", "error");
     } finally {
       setSaving(false);
     }
@@ -247,7 +256,7 @@ export default function AdminPollsPage() {
         }
       >
         <div className="space-y-4">
-          <Field label="Question">
+          <Field label="Question" error={errors.question}>
             <input className={inputClass} placeholder="What do you want to ask?" value={form.question} onChange={(e) => setForm({ ...form, question: e.target.value })} />
           </Field>
           <Field label="Description">
@@ -262,7 +271,7 @@ export default function AdminPollsPage() {
               </div>
             </Field>
           ) : (
-            <Field label="Options" hint="One per line">
+            <Field label="Options" hint="One per line" error={errors.options}>
               <textarea rows={4} className={inputClass} value={form.options} onChange={(e) => setForm({ ...form, options: e.target.value })} />
             </Field>
           )}

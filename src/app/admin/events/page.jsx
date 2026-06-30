@@ -14,10 +14,11 @@ import {
   ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { cn } from "@/lib/utils";
+import { presence, future, collect, hasErrors } from "@/lib/validate";
 
 const typeTone = {
   meeting: "sky",
@@ -55,14 +56,17 @@ export default function AdminEventsPage() {
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [errors, setErrors] = useState({});
 
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
+    setErrors({});
     setOpen(true);
   };
   const openEdit = (e) => {
     setEditing(e);
+    setErrors({});
     setForm({
       title: e.title ?? "",
       // <input type="date"> needs YYYY-MM-DD
@@ -76,10 +80,13 @@ export default function AdminEventsPage() {
   };
 
   const publish = async () => {
-    if (!form.title.trim() || !form.date) {
-      toast("Title and date are required", "error");
-      return;
-    }
+    const errs = collect({
+      title: presence(form.title, "Title"),
+      date: presence(form.date, "Date") || future(form.date, { label: "Date" }),
+      type: presence(form.type, "Type"),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       const payload = {
@@ -102,7 +109,9 @@ export default function AdminEventsPage() {
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not save event", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not save event", "error");
     } finally {
       setSaving(false);
     }
@@ -224,11 +233,11 @@ export default function AdminEventsPage() {
       >
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
-            <Field label="Title">
+            <Field label="Title" error={errors.title}>
               <input className={inputClass} placeholder="Event title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
             </Field>
           </div>
-          <Field label="Date">
+          <Field label="Date" error={errors.date}>
             <input type="date" className={inputClass} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
           </Field>
           <Field label="Time">
@@ -237,7 +246,7 @@ export default function AdminEventsPage() {
           <Field label="Location">
             <input className={inputClass} placeholder="Community Hall" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
           </Field>
-          <Field label="Type">
+          <Field label="Type" error={errors.type}>
             <select className={inputClass} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
               <option value="meeting">meeting</option>
               <option value="social">social</option>

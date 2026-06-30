@@ -5,10 +5,11 @@ import {
   PageHeader, Card, Button, Badge, Segmented, Table, Th, Td, Tr, Modal, Field, inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatINR, digitsOnly } from "@/lib/utils";
+import { presence, phone as vphone, email as vemail, collect, hasErrors } from "@/lib/validate";
 
 const STATUS_TONE = {
   initiated: "amber", under_review: "sky", approved: "green",
@@ -25,13 +26,20 @@ export default function TransfersPage() {
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
   const initiate = async () => {
-    if (!form.plotId || !form.toOwnerName.trim()) {
-      return toast("Plot and new owner name are required", "error");
-    }
+    const errs = collect({
+      plotId: presence(form.plotId, "Plot ID"),
+      toOwnerName: presence(form.toOwnerName, "New owner name"),
+      toPhone: vphone(form.toPhone),
+      toEmail: vemail(form.toEmail, { required: false }),
+      duesAction: presence(form.duesAction, "Dues action"),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       await api.post("/admin/transfers/initiate", {
@@ -47,7 +55,8 @@ export default function TransfersPage() {
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not initiate transfer", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe); else toast(e.message || "Could not initiate transfer", "error");
     } finally {
       setSaving(false);
     }
@@ -71,7 +80,7 @@ export default function TransfersPage() {
       <PageHeader
         title="Ownership transfers"
         subtitle="Move a plot from its current owner to a new one"
-        actions={<Button icon="arrow-left-right" onClick={() => setOpen(true)}>New transfer</Button>}
+        actions={<Button icon="arrow-left-right" onClick={() => { setForm(emptyForm); setErrors({}); setOpen(true); }}>New transfer</Button>}
       />
 
       <Card>
@@ -144,12 +153,12 @@ export default function TransfersPage() {
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Plot ID" hint="The plot being transferred"><input className={inputClass} value={form.plotId} onChange={(e) => setForm({ ...form, plotId: digitsOnly(e.target.value, 12) })} placeholder="e.g. 142" /></Field>
+          <Field label="Plot ID" hint="The plot being transferred" error={errors.plotId}><input className={inputClass} value={form.plotId} onChange={(e) => setForm({ ...form, plotId: digitsOnly(e.target.value, 12) })} placeholder="e.g. 142" /></Field>
           <Field label="Reason"><select className={inputClass} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>{["sale", "gift", "inheritance", "other"].map((r) => <option key={r} value={r}>{r}</option>)}</select></Field>
-          <Field label="New owner name"><input className={inputClass} value={form.toOwnerName} onChange={(e) => setForm({ ...form, toOwnerName: e.target.value })} placeholder="Full name" /></Field>
-          <Field label="New owner email"><input type="email" className={inputClass} value={form.toEmail} onChange={(e) => setForm({ ...form, toEmail: e.target.value })} placeholder="optional" /></Field>
-          <Field label="New owner phone"><input inputMode="numeric" maxLength={10} className={inputClass} value={form.toPhone} onChange={(e) => setForm({ ...form, toPhone: digitsOnly(e.target.value) })} placeholder="optional" /></Field>
-          <Field label="Outstanding dues" hint="What happens to the plot's open balance on approval">
+          <Field label="New owner name" required error={errors.toOwnerName}><input className={inputClass} value={form.toOwnerName} onChange={(e) => setForm({ ...form, toOwnerName: e.target.value })} placeholder="Full name" /></Field>
+          <Field label="New owner email" error={errors.toEmail}><input type="email" className={inputClass} value={form.toEmail} onChange={(e) => setForm({ ...form, toEmail: e.target.value })} placeholder="optional" /></Field>
+          <Field label="New owner phone" error={errors.toPhone}><input inputMode="numeric" maxLength={10} className={inputClass} value={form.toPhone} onChange={(e) => setForm({ ...form, toPhone: digitsOnly(e.target.value) })} placeholder="optional" /></Field>
+          <Field label="Outstanding dues" hint="What happens to the plot's open balance on approval" error={errors.duesAction}>
             <select className={inputClass} value={form.duesAction} onChange={(e) => setForm({ ...form, duesAction: e.target.value })}>
               <option value="carry">Carry forward to new owner</option>
               <option value="clear">Write off / settle on transfer</option>

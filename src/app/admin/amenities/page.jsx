@@ -20,10 +20,11 @@ import {
   ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatINR, formatDate } from "@/lib/utils";
+import { presence, number as vnumber, collect, hasErrors } from "@/lib/validate";
 
 const ICON_OPTIONS = [
   "building-2", "dumbbell", "waves", "trees", "party-popper",
@@ -59,6 +60,7 @@ export default function AdminAmenitiesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -66,10 +68,12 @@ export default function AdminAmenitiesPage() {
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
+    setErrors({});
     setOpen(true);
   };
   const openEdit = (a) => {
     setEditing(a);
+    setErrors({});
     setForm({
       name: a.name ?? "",
       description: a.description ?? "",
@@ -82,10 +86,13 @@ export default function AdminAmenitiesPage() {
   };
 
   const save = async () => {
-    if (!form.name.trim()) {
-      toast("Amenity name is required", "error");
-      return;
-    }
+    const errs = collect({
+      name: presence(form.name, "Name"),
+      capacity: vnumber(form.capacity, { positive: true, integer: true, label: "Capacity" }),
+      hourlyRate: vnumber(form.hourlyRate, { min: 0, label: "Hourly rate" }),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     const payload = {
       name: form.name.trim(),
       description: form.description.trim(),
@@ -108,7 +115,9 @@ export default function AdminAmenitiesPage() {
       setOpen(false);
       reloadAmenities();
     } catch (e) {
-      toast(e.message || "Could not save amenity", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not save amenity", "error");
     } finally {
       setSaving(false);
     }
@@ -278,7 +287,7 @@ export default function AdminAmenitiesPage() {
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field label="Name">
+            <Field label="Name" error={errors.name}>
               <input className={inputClass} placeholder="e.g. Clubhouse" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </Field>
           </div>
@@ -287,10 +296,10 @@ export default function AdminAmenitiesPage() {
               <textarea rows={2} className={inputClass} placeholder="Short description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </Field>
           </div>
-          <Field label="Capacity">
-            <input className={inputClass} placeholder="e.g. 50 people" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
+          <Field label="Capacity" error={errors.capacity}>
+            <input type="number" min="1" className={inputClass} placeholder="e.g. 50" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
           </Field>
-          <Field label="Hourly rate (₹)" hint="0 for free">
+          <Field label="Hourly rate (₹)" hint="0 for free" error={errors.hourlyRate}>
             <input type="number" min="0" className={inputClass} placeholder="0" value={form.hourlyRate} onChange={(e) => setForm({ ...form, hourlyRate: e.target.value })} />
           </Field>
           <Field label="Icon">

@@ -56,6 +56,23 @@ export class ApiError extends Error {
   }
 }
 
+// Pull per-field validation errors out of a thrown ApiError, as a
+// { camelField: message } map ready for <Field error={...}>. The backend's
+// validate!/check_presence! return a { field: "message" } hash; Sequel model
+// errors return { column: ["message", ...] } — both are normalized here. Returns
+// {} for anything that isn't a field map (network, 401/403, 500, single-string
+// errors), so callers do: if (!hasErrors(setErrors(fieldErrors(e)))) toast(e.message).
+export function fieldErrors(err) {
+  const data = err && err.body && err.body.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(data)) {
+    const msg = Array.isArray(v) ? v[0] : v;
+    if (typeof msg === "string" && msg) out[toCamel(k)] = msg;
+  }
+  return out;
+}
+
 // De-duplicate concurrent identical GETs. React StrictMode (dev) mounts effects
 // twice, and multiple widgets may request the same endpoint at once; sharing one
 // in-flight promise per (path + query) collapses those into a single network

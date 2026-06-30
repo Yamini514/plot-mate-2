@@ -5,10 +5,11 @@ import {
   PageHeader, Card, Button, Badge, Segmented, Table, Th, Td, Tr, Modal, Field, inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
+import { presence, future, collect, hasErrors } from "@/lib/validate";
 import { MaintenanceCalendar } from "./MaintenanceCalendar";
 
 const DUE_TONE = { overdue: "rose", due_soon: "amber", ok: "green", inactive: "slate", unscheduled: "slate" };
@@ -26,14 +27,22 @@ export default function MaintenancePage() {
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
   const [logFor, setLogFor] = useState(null); // schedule pending a completion log
   const [log, setLog] = useState(emptyLog);
+  const [logErrors, setLogErrors] = useState({});
   const [busyId, setBusyId] = useState(null);
 
   const createSchedule = async () => {
-    if (!form.title.trim()) return toast("A title is required", "error");
+    const errs = collect({
+      title: presence(form.title, "Title"),
+      frequency: presence(form.frequency, "Frequency"),
+      nextDueOn: future(form.nextDueOn, { label: "First due date" }),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       await api.post("/admin/maintenance", {
@@ -49,13 +58,21 @@ export default function MaintenancePage() {
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not create schedule", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not create schedule", "error");
     } finally {
       setSaving(false);
     }
   };
 
   const submitLog = async () => {
+    const errs = collect({
+      outcome: presence(log.outcome, "Outcome"),
+      report: log.outcome === "issue_found" ? presence(log.report, "Report") : "",
+    });
+    setLogErrors(errs);
+    if (hasErrors(errs)) return;
     setBusyId(logFor.dbId);
     try {
       await api.post(`/admin/maintenance/${logFor.dbId}/log`, {
@@ -68,7 +85,9 @@ export default function MaintenancePage() {
       setLog(emptyLog);
       reload();
     } catch (e) {
-      toast(e.message || "Could not log inspection", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setLogErrors(fe);
+      else toast(e.message || "Could not log inspection", "error");
     } finally {
       setBusyId(null);
     }
@@ -94,7 +113,7 @@ export default function MaintenancePage() {
         actions={
           <div className="flex items-center gap-2">
             <Segmented value={view} onChange={setView} options={[{ value: "list", label: "List" }, { value: "calendar", label: "Calendar" }]} />
-            <Button icon="plus" onClick={() => setOpen(true)}>New schedule</Button>
+            <Button icon="plus" onClick={() => { setForm(emptyForm); setErrors({}); setOpen(true); }}>New schedule</Button>
           </div>
         }
       />
@@ -148,7 +167,7 @@ export default function MaintenancePage() {
                 <Td className="text-slate-500">{s.lastDoneOn ? formatDate(s.lastDoneOn) : "—"}</Td>
                 <Td>
                   <div className="flex justify-end gap-1.5">
-                    <Button icon="clipboard-check" onClick={() => { setLogFor(s); setLog(emptyLog); }}>Log</Button>
+                    <Button icon="clipboard-check" onClick={() => { setLogFor(s); setLog(emptyLog); setLogErrors({}); }}>Log</Button>
                     <Button variant="secondary" icon={s.active ? "pause" : "play"} loading={busyId === s.dbId} onClick={() => toggle(s)}>
                       {s.active ? "Pause" : "Resume"}
                     </Button>
@@ -173,21 +192,21 @@ export default function MaintenancePage() {
       {/* Create schedule */}
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => { setOpen(false); setErrors({}); }}
         title="New maintenance schedule"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => { setOpen(false); setErrors({}); }}>Cancel</Button>
             <Button icon="check" loading={saving} onClick={createSchedule}>Create</Button>
           </>
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2"><Field label="Title"><input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Lift inspection" /></Field></div>
+          <div className="sm:col-span-2"><Field label="Title" required error={errors.title}><input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Lift inspection" /></Field></div>
           <Field label="Category"><input className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="electrical / plumbing…" /></Field>
           <Field label="Area"><input className={inputClass} value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} placeholder="Block A clubhouse" /></Field>
-          <Field label="Frequency"><select className={inputClass} value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value })}>{FREQS.map((f) => <option key={f} value={f}>{f.replace("_", " ")}</option>)}</select></Field>
-          <Field label="First due date" hint="Defaults to one cycle from today"><input type="date" className={inputClass} value={form.nextDueOn} onChange={(e) => setForm({ ...form, nextDueOn: e.target.value })} /></Field>
+          <Field label="Frequency" error={errors.frequency}><select className={inputClass} value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value })}>{FREQS.map((f) => <option key={f} value={f}>{f.replace("_", " ")}</option>)}</select></Field>
+          <Field label="First due date" hint="Defaults to one cycle from today" error={errors.nextDueOn}><input type="date" className={inputClass} value={form.nextDueOn} onChange={(e) => setForm({ ...form, nextDueOn: e.target.value })} /></Field>
           <div className="sm:col-span-2"><Field label="Notes"><textarea className={inputClass} rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field></div>
         </div>
       </Modal>
@@ -195,24 +214,24 @@ export default function MaintenancePage() {
       {/* Log a completion */}
       <Modal
         open={!!logFor}
-        onClose={() => setLogFor(null)}
+        onClose={() => { setLogFor(null); setLogErrors({}); }}
         title={`Log inspection · ${logFor?.title ?? ""}`}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setLogFor(null)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => { setLogFor(null); setLogErrors({}); }}>Cancel</Button>
             <Button icon="check" loading={busyId === logFor?.dbId} onClick={submitLog}>Save log</Button>
           </>
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Performed on" hint="Defaults to today"><input type="date" className={inputClass} value={log.performedOn} onChange={(e) => setLog({ ...log, performedOn: e.target.value })} /></Field>
-          <Field label="Outcome">
+          <Field label="Outcome" error={logErrors.outcome}>
             <select className={inputClass} value={log.outcome} onChange={(e) => setLog({ ...log, outcome: e.target.value })}>
               <option value="ok">All OK</option>
               <option value="issue_found">Issue found</option>
             </select>
           </Field>
-          <div className="sm:col-span-2"><Field label="Report"><textarea className={inputClass} rows={3} value={log.report} onChange={(e) => setLog({ ...log, report: e.target.value })} placeholder="What was checked / found" /></Field></div>
+          <div className="sm:col-span-2"><Field label="Report" error={logErrors.report}><textarea className={inputClass} rows={3} value={log.report} onChange={(e) => setLog({ ...log, report: e.target.value })} placeholder="What was checked / found" /></Field></div>
         </div>
         {log.outcome === "issue_found" && (
           <p className="mt-2 flex items-center gap-1.5 text-xs text-amber-600">

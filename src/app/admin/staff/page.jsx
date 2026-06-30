@@ -20,11 +20,12 @@ import {
   ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { AvatarUpload } from "@/components/AvatarUpload";
-import { formatINR, formatDate, validateAccount, validatePhone, digitsOnly } from "@/lib/utils";
+import { formatINR, formatDate, validateAccount, digitsOnly } from "@/lib/utils";
+import { text as vtext, phone as vphone, number as vnumber, presence, future, collect, hasErrors } from "@/lib/validate";
 import { VendorPerformance } from "./VendorPerformance";
 
 const emptyForm = {
@@ -43,6 +44,7 @@ export default function StaffPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -53,10 +55,12 @@ export default function StaffPage() {
   const openCreate = () => {
     setEditing(null);
     setForm(emptyForm);
+    setErrors({});
     setOpen(true);
   };
   const openEdit = (s) => {
     setEditing(s);
+    setErrors({});
     setForm({
       ...emptyForm,
       name: s.name ?? "",
@@ -108,15 +112,19 @@ export default function StaffPage() {
   };
 
   const save = async () => {
-    if (!form.name.trim() || !form.role.trim()) {
-      toast("Name and role are required", "error");
-      return;
-    }
-    const phoneErr = validatePhone(form.phone);
-    if (phoneErr) {
-      toast(phoneErr, "error");
-      return;
-    }
+    const errs = collect({
+      name: vtext(form.name, { min: 2, max: 120, label: "Name" }),
+      role: presence(form.role, "Role"),
+      phone: vphone(form.phone),
+      monthlySalary: vnumber(form.monthlySalary, { min: 0, required: false, label: "Monthly salary" }),
+      ...(form.type === "vendor" ? {
+        slaResponseHours: vnumber(form.slaResponseHours, { min: 0, integer: true, required: false, label: "SLA response" }),
+        licenseExpiry: future(form.licenseExpiry, { label: "License expiry" }),
+        insuranceExpiry: future(form.insuranceExpiry, { label: "Insurance expiry" }),
+      } : {}),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     if (!editing && form.createLogin) {
       const err = validateAccount({ email: form.email, password: form.password, confirm: form.confirmPassword });
       if (err) { toast(err, "error"); return; }
@@ -169,7 +177,9 @@ export default function StaffPage() {
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not save", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not save", "error");
     } finally {
       setSaving(false);
     }
@@ -326,10 +336,10 @@ export default function StaffPage() {
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Name">
+          <Field label="Name" required error={errors.name}>
             <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Full name / agency" />
           </Field>
-          <Field label="Role / Designation">
+          <Field label="Role / Designation" required error={errors.role}>
             <input className={inputClass} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} placeholder="e.g. Security Guard" />
           </Field>
           <Field label="Type">
@@ -338,10 +348,10 @@ export default function StaffPage() {
               <option value="vendor">Vendor</option>
             </select>
           </Field>
-          <Field label="Phone">
+          <Field label="Phone" error={errors.phone}>
             <input className={inputClass} type="tel" inputMode="numeric" maxLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: digitsOnly(e.target.value) })} placeholder="10-digit mobile" />
           </Field>
-          <Field label="Monthly salary (₹)">
+          <Field label="Monthly salary (₹)" error={errors.monthlySalary}>
             <input type="number" className={inputClass} value={form.monthlySalary} onChange={(e) => setForm({ ...form, monthlySalary: e.target.value })} placeholder="18000" />
           </Field>
           <Field label="Joined on">
@@ -369,10 +379,10 @@ export default function StaffPage() {
                 </Field>
               </div>
               <Field label="License number"><input className={inputClass} value={form.licenseNo} onChange={(e) => setForm({ ...form, licenseNo: e.target.value })} /></Field>
-              <Field label="License expiry"><input type="date" className={inputClass} value={form.licenseExpiry} onChange={(e) => setForm({ ...form, licenseExpiry: e.target.value })} /></Field>
+              <Field label="License expiry" error={errors.licenseExpiry}><input type="date" className={inputClass} value={form.licenseExpiry} onChange={(e) => setForm({ ...form, licenseExpiry: e.target.value })} /></Field>
               <Field label="Insurance policy"><input className={inputClass} value={form.insurancePolicy} onChange={(e) => setForm({ ...form, insurancePolicy: e.target.value })} /></Field>
-              <Field label="Insurance expiry"><input type="date" className={inputClass} value={form.insuranceExpiry} onChange={(e) => setForm({ ...form, insuranceExpiry: e.target.value })} /></Field>
-              <Field label="SLA response (hours)"><input type="number" className={inputClass} value={form.slaResponseHours} onChange={(e) => setForm({ ...form, slaResponseHours: e.target.value })} placeholder="e.g. 8" /></Field>
+              <Field label="Insurance expiry" error={errors.insuranceExpiry}><input type="date" className={inputClass} value={form.insuranceExpiry} onChange={(e) => setForm({ ...form, insuranceExpiry: e.target.value })} /></Field>
+              <Field label="SLA response (hours)" error={errors.slaResponseHours}><input type="number" className={inputClass} value={form.slaResponseHours} onChange={(e) => setForm({ ...form, slaResponseHours: e.target.value })} placeholder="e.g. 8" /></Field>
               <Field label="Rate card / pricing"><input className={inputClass} value={form.rateCard} onChange={(e) => setForm({ ...form, rateCard: e.target.value })} placeholder="₹500 visit + parts" /></Field>
             </div>
             {editing && (
