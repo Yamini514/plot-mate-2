@@ -58,6 +58,8 @@ export default function MemberVisitors() {
   const [shareFor, setShareFor] = useState(null);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [purpose, setPurpose] = useState("Guest");
+  const [customPurpose, setCustomPurpose] = useState("");
 
   // Human-readable text for sharing a gate pass via any channel.
   const passShareText = (p) =>
@@ -108,12 +110,17 @@ export default function MemberVisitors() {
   const preRegister = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    const resolvedPurpose = purpose === "Other" ? customPurpose.trim() : purpose;
+    if (purpose === "Other" && !resolvedPurpose) {
+      toast("Enter the purpose", "error");
+      return;
+    }
     setSaving(true);
     try {
       const { data } = await api.post("/member/visitors", {
         name: f.get("name") || "Guest",
         phone: f.get("phone"),
-        purpose: f.get("purpose") || "Guest",
+        purpose: resolvedPurpose || "Guest",
         vehicleNo: f.get("vehicle"),
         expectedOn: f.get("date"),
       });
@@ -147,7 +154,7 @@ export default function MemberVisitors() {
       <PageHeader
         title="Gate & Visitors"
         subtitle="Pre-approve guests, manage passes and track deliveries at your gate"
-        actions={<Button icon="user-plus" onClick={() => setOpen(true)}>Pre-register visitor</Button>}
+        actions={<Button icon="user-plus" onClick={() => { setPurpose("Guest"); setCustomPurpose(""); setOpen(true); }}>Pre-register visitor</Button>}
       />
 
       {/* Live approvals banner */}
@@ -380,10 +387,15 @@ export default function MemberVisitors() {
             <input name="property" className={inputClass} value={user?.plotNo ?? "—"} readOnly />
           </Field>
           <Field label="Purpose">
-            <select name="purpose" className={inputClass} defaultValue="Guest">
+            <select name="purpose" className={inputClass} value={purpose} onChange={(e) => setPurpose(e.target.value)}>
               {PURPOSES.map((p) => <option key={p}>{p}</option>)}
             </select>
           </Field>
+          {purpose === "Other" && (
+            <Field label="Enter purpose">
+              <input className={inputClass} placeholder="Reason for visit" value={customPurpose} onChange={(e) => setCustomPurpose(e.target.value)} />
+            </Field>
+          )}
           <Field label="Date">
             <input name="date" className={inputClass} placeholder="Today / 14 Jun 2026" defaultValue="Today" />
           </Field>

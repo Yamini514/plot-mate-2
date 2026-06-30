@@ -32,7 +32,7 @@ const CATEGORIES = [
   "Road work", "Street lights", "Compound wall", "Plantation",
   "Salaries", "Drainage", "Security", "Water", "Other",
 ];
-const emptyExpense = { date: "", amount: "", category: "Road work", vendor: "", description: "", notes: "" };
+const emptyExpense = { date: "", amount: "", category: "Road work", customCategory: "", vendor: "", description: "", notes: "" };
 
 // Where added funds come from. "Other" reveals a manual category field.
 const INCOME_CATEGORIES = [
@@ -173,16 +173,18 @@ export default function TreasuryPage() {
 
   const saveExpense = async () => {
     const amount = Number(form.amount) || 0;
+    const category = form.category === "Other" ? form.customCategory.trim() : form.category;
     const errs = collect({
       description: presence(form.description, "Description"),
       amount: vnumber(form.amount, { positive: true, label: "Amount" }),
+      customCategory: form.category === "Other" ? presence(category, "Category") : "",
     });
     setErrors(errs);
     if (hasErrors(errs)) return;
     const payload = {
       date: form.date || undefined,
       description: form.description.trim(),
-      category: form.category,
+      category,
       vendor: form.vendor.trim() || "—",
       amount,
       notes: form.notes.trim() || undefined,
@@ -445,6 +447,11 @@ export default function TreasuryPage() {
               ))}
             </select>
           </Field>
+          {form.category === "Other" && (
+            <Field label="Enter category" error={errors.customCategory}>
+              <input className={inputClass} placeholder="e.g. Borewell repair" value={form.customCategory} onChange={(e) => setForm({ ...form, customCategory: e.target.value })} />
+            </Field>
+          )}
           <Field label="Vendor">
             <input className={inputClass} placeholder="Vendor name" value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })} />
           </Field>

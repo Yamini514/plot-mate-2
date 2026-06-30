@@ -50,6 +50,8 @@ export default function IncidentReporting() {
   const [filter, setFilter] = useState("all");
   const [open, setOpen] = useState(false);
   const [severity, setSeverity] = useState("medium");
+  const [incidentType, setIncidentType] = useState(incidentTypes[0]);
+  const [customType, setCustomType] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Open the log-incident modal automatically when linked from a quick action.
@@ -80,17 +82,21 @@ export default function IncidentReporting() {
     if (!location) return toast("Enter where the incident happened.", "error");
     if (description.length < 10)
       return toast("Add a short description (at least 10 characters) of what happened.", "error");
+    const type = incidentType === "Other" ? customType.trim() : incidentType;
+    if (incidentType === "Other" && !type) return toast("Enter the incident type.", "error");
 
     setSaving(true);
     try {
       const { data } = await api.post("/guard/incidents", {
-        incidentType: f.get("type") || "Other",
+        incidentType: type,
         location,
         description,
         severity,
       });
       setOpen(false);
       setSeverity("medium");
+      setIncidentType(incidentTypes[0]);
+      setCustomType("");
       toast(`Incident ${data.code} logged`);
       reload();
     } catch (err) {
@@ -194,12 +200,17 @@ export default function IncidentReporting() {
       >
         <form id="log-incident" onSubmit={log} className="space-y-4">
           <Field label="Incident type">
-            <select name="type" className={inputClass} defaultValue={incidentTypes[0]}>
+            <select name="type" className={inputClass} value={incidentType} onChange={(e) => setIncidentType(e.target.value)}>
               {incidentTypes.map((t) => (
                 <option key={t}>{t}</option>
               ))}
             </select>
           </Field>
+          {incidentType === "Other" && (
+            <Field label="Enter incident type">
+              <input className={inputClass} placeholder="Describe the type" value={customType} onChange={(e) => setCustomType(e.target.value)} />
+            </Field>
+          )}
           <Field label="Location">
             <input name="location" required className={inputClass} placeholder="e.g. Main Gate, Block B Driveway" />
           </Field>

@@ -92,6 +92,8 @@ export default function VisitorManagement() {
   // Register-form fields that drive (and are driven by) plot verification.
   const [flat, setFlat] = useState("");
   const [resident, setResident] = useState("");
+  const [purpose, setPurpose] = useState("Guest");
+  const [customPurpose, setCustomPurpose] = useState("");
   const verify = usePlotVerify(flat, open);
 
   // Open the register modal automatically when linked from a quick action.
@@ -113,6 +115,8 @@ export default function VisitorManagement() {
   const resetForm = () => {
     setFlat("");
     setResident("");
+    setPurpose("Guest");
+    setCustomPurpose("");
     setVerify({ status: "idle" });
   };
 
@@ -159,6 +163,8 @@ export default function VisitorManagement() {
       return toast("Enter a valid phone number (at least 8 digits).", "error");
     if (!flat.trim()) return toast("Enter the flat / plot number being visited.", "error");
     if (!resident.trim()) return toast("Enter the resident being visited.", "error");
+    const visitPurpose = purpose === "Other" ? customPurpose.trim() : purpose;
+    if (purpose === "Other" && !visitPurpose) return toast("Enter the purpose of visit.", "error");
 
     setSaving(true);
     try {
@@ -167,7 +173,7 @@ export default function VisitorManagement() {
         phone,
         residentName: resident.trim(),
         plotNo: flat.trim(),
-        purpose: f.get("purpose") || "Guest",
+        purpose: visitPurpose || "Guest",
         vehicleNo: f.get("vehicle") || null,
       });
       setOpen(false);
@@ -353,12 +359,17 @@ export default function VisitorManagement() {
             />
           </Field>
           <Field label="Purpose of visit">
-            <select name="purpose" className={inputClass} defaultValue="Guest">
+            <select name="purpose" className={inputClass} value={purpose} onChange={(e) => setPurpose(e.target.value)}>
               {visitorPurposes.map((p) => (
                 <option key={p}>{p}</option>
               ))}
             </select>
           </Field>
+          {purpose === "Other" && (
+            <Field label="Enter purpose">
+              <input className={inputClass} placeholder="Reason for visit" value={customPurpose} onChange={(e) => setCustomPurpose(e.target.value)} />
+            </Field>
+          )}
           <Field label="Vehicle number (optional)">
             <input name="vehicle" className={inputClass} placeholder="e.g. TS 09 GK 4412" />
           </Field>

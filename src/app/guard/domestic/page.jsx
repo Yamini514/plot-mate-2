@@ -11,9 +11,9 @@ import { useApi, useDebounced } from "@/lib/useApi";
 import { useSettings } from "@/lib/useSettings";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
-import { collect, hasErrors, text as vtext, phone as vphone } from "@/lib/validate";
+import { collect, hasErrors, text as vtext, phone as vphone, presence } from "@/lib/validate";
 
-const EMPTY = { name: "", workerType: "Maid", phone: "", plotNo: "" };
+const EMPTY = { name: "", workerType: "Maid", customWorkerType: "", phone: "", plotNo: "" };
 
 export default function GuardDomesticPage() {
   const toast = useToast();
@@ -33,11 +33,16 @@ export default function GuardDomesticPage() {
   const [busy, setBusy] = useState(false);
 
   const add = async () => {
-    const errs = collect({ name: vtext(form.name, { min: 2, max: 120, label: "Name" }), phone: vphone(form.phone) });
+    const workerType = form.workerType === "Other" ? form.customWorkerType.trim() : form.workerType;
+    const errs = collect({
+      name: vtext(form.name, { min: 2, max: 120, label: "Name" }),
+      phone: vphone(form.phone),
+      customWorkerType: form.workerType === "Other" ? presence(workerType, "Type") : "",
+    });
     setErrors(errs);
     if (hasErrors(errs)) return;
     setBusy(true);
-    try { await api.post("/guard/domestic", form); toast("Worker registered"); setForm(EMPTY); setOpen(false); reload(); }
+    try { await api.post("/guard/domestic", { ...form, workerType }); toast("Worker registered"); setForm(EMPTY); setOpen(false); reload(); }
     catch (e) { toast(e.message || "Could not register", "error"); }
     finally { setBusy(false); }
   };
@@ -118,6 +123,7 @@ export default function GuardDomesticPage() {
           <Field label="Name" required error={errors.name} className="col-span-2"><input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label="Type"><select className={inputClass} value={form.workerType} onChange={(e) => setForm({ ...form, workerType: e.target.value })}>{types.map((t) => <option key={t} value={t}>{t}</option>)}</select></Field>
           <Field label="Plot"><input className={inputClass} value={form.plotNo} onChange={(e) => setForm({ ...form, plotNo: e.target.value })} /></Field>
+          {form.workerType === "Other" && <Field label="Enter type" error={errors.customWorkerType} className="col-span-2"><input className={inputClass} placeholder="e.g. Tutor" value={form.customWorkerType} onChange={(e) => setForm({ ...form, customWorkerType: e.target.value })} /></Field>}
           <Field label="Phone" error={errors.phone} className="col-span-2"><input className={inputClass} maxLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "") })} /></Field>
         </div>
       </Modal>
