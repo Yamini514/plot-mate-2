@@ -5,11 +5,10 @@ import { Modal, Button } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { cn } from "@/lib/utils";
 
-// The three real delivery channels the backend understands, plus an "All"
+// The real delivery channels the backend understands, plus an "All"
 // convenience that fans out to every channel at once.
 export const REMINDER_CHANNELS = [
   { id: "whatsapp", label: "WhatsApp", icon: "message-circle", hint: "Instant chat message" },
-  { id: "sms", label: "SMS", icon: "smartphone", hint: "Text to mobile" },
   { id: "email", label: "Email", icon: "mail", hint: "To registered email" },
 ];
 

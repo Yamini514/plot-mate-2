@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from "react";
 import {
-  PageHeader, Card, Button, Tabs, Field, inputClass, Badge,
+  PageHeader, Card, Button, Tabs, Field, inputClass, inputErrorClass, Badge,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
+import { cn } from "@/lib/utils";
+import { email as vemail } from "@/lib/validate";
 
 const TABS = [
   { value: "email", label: "Email" },
@@ -24,6 +26,7 @@ export default function PlatformSettingsPage() {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [testTo, setTestTo] = useState("");
+  const [testErr, setTestErr] = useState("");
 
   // Seed the editable copy once the fetched config arrives (and on reload).
   // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing editable form from fetched data
@@ -44,7 +47,9 @@ export default function PlatformSettingsPage() {
   };
 
   const sendTest = async () => {
-    if (!testTo.trim()) return toast("Enter a recipient email", "error");
+    const err = vemail(testTo);
+    setTestErr(err);
+    if (err) return;
     try {
       await api.post("/super/settings/test-email", { to: testTo.trim() });
       toast("Test email sent");
@@ -91,9 +96,13 @@ export default function PlatformSettingsPage() {
             <Field label="SMTP port"><input type="number" className={inputClass} value={form.email.smtpPort ?? ""} onChange={(e) => patch("email", "smtpPort", Number(e.target.value))} /></Field>
             <Field label="From name"><input className={inputClass} value={form.email.fromName ?? ""} onChange={(e) => patch("email", "fromName", e.target.value)} /></Field>
             <Field label="From email"><input type="email" className={inputClass} value={form.email.fromEmail ?? ""} onChange={(e) => patch("email", "fromEmail", e.target.value)} /></Field>
-            <div className="sm:col-span-2 mt-2 flex items-end gap-2 border-t border-slate-100 pt-4">
-              <Field label="Send a test email to"><input type="email" className={inputClass} value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@example.com" /></Field>
-              <Button variant="secondary" icon="send" onClick={sendTest}>Send test</Button>
+            <div className="sm:col-span-2 mt-2 flex items-start gap-2 border-t border-slate-100 pt-4">
+              <div className="flex-1">
+                <Field label="Send a test email to" error={testErr}>
+                  <input type="email" className={cn(inputClass, testErr && inputErrorClass)} value={testTo} onChange={(e) => { setTestTo(e.target.value); setTestErr(""); }} placeholder="you@example.com" />
+                </Field>
+              </div>
+              <Button variant="secondary" icon="send" className="mt-[26px]" onClick={sendTest}>Send test</Button>
             </div>
           </div>
         )}

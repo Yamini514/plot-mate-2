@@ -3,14 +3,15 @@
 import { useState } from "react";
 import {
   PageHeader, Card, Button, Badge, Segmented, Table, Th, Td, Tr,
-  Modal, Field, inputClass, ConfirmDialog,
+  Modal, Field, inputClass, inputErrorClass, ActionMenu,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { AvatarUpload } from "@/components/AvatarUpload";
 import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
-import { formatDate, digitsOnly } from "@/lib/utils";
+import { formatDate, digitsOnly, cn } from "@/lib/utils";
+import { presence, email as vemail, phone as vphone, number as vnumber, collect, hasErrors } from "@/lib/validate";
 
 const STATUS_TONE = { submitted: "amber", approved: "green", rejected: "rose" };
 const emptyForm = {
@@ -27,7 +28,15 @@ export default function OnboardingPage() {
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
+
+  const setField = (key, value) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    setErrors((e) => (e[key] ? { ...e, [key]: undefined } : e));
+  };
+
+  const openForm = () => { setForm(emptyForm); setErrors({}); setOpen(true); };
 
   // Approval / rejection
   const [busyId, setBusyId] = useState(null);
@@ -38,10 +47,15 @@ export default function OnboardingPage() {
   const [approved, setApproved] = useState(null); // { ventureName, email, tempPassword }
 
   const logRequest = async () => {
-    if (!form.ventureName.trim() || !form.requesterName.trim() || !form.requesterEmail.trim()) {
-      toast("Venture name, requester name and email are required", "error");
-      return;
-    }
+    const errs = collect({
+      ventureName: presence(form.ventureName, "Venture name"),
+      requesterName: presence(form.requesterName, "Requester name"),
+      requesterEmail: vemail(form.requesterEmail),
+      requesterPhone: vphone(form.requesterPhone),
+      plotCount: vnumber(form.plotCount, { positive: true, integer: true, required: false, label: "Plot count" }),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       await api.post("/onboarding-requests", {
@@ -108,7 +122,7 @@ export default function OnboardingPage() {
       <PageHeader
         title="Onboarding requests"
         subtitle="Review venture requests, then approve to activate a workspace"
-        actions={<Button icon="plus" onClick={() => setOpen(true)}>Log request</Button>}
+        actions={<Button icon="plus" onClick={openForm}>Log request</Button>}
       />
 
       <Card>
@@ -150,31 +164,19 @@ export default function OnboardingPage() {
                 <Td className="text-right text-slate-500">{r.plotCount ?? "—"}</Td>
                 <Td><Badge tone={STATUS_TONE[r.status] ?? "slate"}>{r.status}</Badge></Td>
                 <Td>
-                  <div className="flex justify-end gap-1.5">
-                    {r.status === "submitted" ? (
-                      <>
-                        <Button
-                          icon="check"
-                          loading={busyId === r.dbId && !!approving}
-                          onClick={() => openApprove(r)}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          icon="x"
-                          onClick={() => { setReject(r); setReason(""); }}
-                        >
-                          Reject
-                        </Button>
-                      </>
-                    ) : (
-                      <span className="text-xs text-slate-400">
-                        {r.status === "approved" ? "Workspace activated" : "Closed"}
-                        {r.decidedAt ? ` · ${formatDate(r.decidedAt)}` : ""}
-                      </span>
-                    )}
-                  </div>
+                  {r.status === "submitted" ? (
+                    <ActionMenu
+                      items={[
+                        { label: "Approve", icon: "check", loading: busyId === r.dbId && !!approving, onClick: () => openApprove(r) },
+                        { label: "Reject", icon: "x", tone: "danger", onClick: () => { setReject(r); setReason(""); } },
+                      ]}
+                    />
+                  ) : (
+                    <span className="flex justify-end text-xs text-slate-400">
+                      {r.status === "approved" ? "Workspace activated" : "Closed"}
+                      {r.decidedAt ? ` · ${formatDate(r.decidedAt)}` : ""}
+                    </span>
+                  )}
                 </Td>
               </Tr>
             ))}
@@ -207,27 +209,27 @@ export default function OnboardingPage() {
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Venture name">
-            <input className={inputClass} value={form.ventureName} onChange={(e) => setForm({ ...form, ventureName: e.target.value })} placeholder="e.g. Green Aero View" />
+          <Field label="Venture name" required error={errors.ventureName}>
+            <input className={cn(inputClass, errors.ventureName && inputErrorClass)} value={form.ventureName} onChange={(e) => setField("ventureName", e.target.value)} placeholder="e.g. Green Aero View" />
           </Field>
           <Field label="Location">
-            <input className={inputClass} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="City / area" />
+            <input className={inputClass} value={form.location} onChange={(e) => setField("location", e.target.value)} placeholder="City / area" />
           </Field>
-          <Field label="Requester name">
-            <input className={inputClass} value={form.requesterName} onChange={(e) => setForm({ ...form, requesterName: e.target.value })} placeholder="Full name" />
+          <Field label="Requester name" required error={errors.requesterName}>
+            <input className={cn(inputClass, errors.requesterName && inputErrorClass)} value={form.requesterName} onChange={(e) => setField("requesterName", e.target.value)} placeholder="Full name" />
           </Field>
-          <Field label="Requester email">
-            <input type="email" className={inputClass} value={form.requesterEmail} onChange={(e) => setForm({ ...form, requesterEmail: e.target.value })} placeholder="admin@venture.in" />
+          <Field label="Requester email" required error={errors.requesterEmail}>
+            <input type="email" className={cn(inputClass, errors.requesterEmail && inputErrorClass)} value={form.requesterEmail} onChange={(e) => setField("requesterEmail", e.target.value)} placeholder="admin@venture.in" />
           </Field>
-          <Field label="Requester phone">
-            <input type="tel" inputMode="numeric" maxLength={10} className={inputClass} value={form.requesterPhone} onChange={(e) => setForm({ ...form, requesterPhone: digitsOnly(e.target.value) })} placeholder="10-digit mobile" />
+          <Field label="Requester phone" error={errors.requesterPhone}>
+            <input type="tel" inputMode="numeric" maxLength={10} className={cn(inputClass, errors.requesterPhone && inputErrorClass)} value={form.requesterPhone} onChange={(e) => setField("requesterPhone", digitsOnly(e.target.value))} placeholder="10-digit mobile" />
           </Field>
-          <Field label="Approx. plots">
-            <input type="number" className={inputClass} value={form.plotCount} onChange={(e) => setForm({ ...form, plotCount: e.target.value })} placeholder="e.g. 280" />
+          <Field label="Approx. plots" error={errors.plotCount}>
+            <input type="number" className={cn(inputClass, errors.plotCount && inputErrorClass)} value={form.plotCount} onChange={(e) => setField("plotCount", e.target.value)} placeholder="e.g. 280" />
           </Field>
           <div className="sm:col-span-2">
             <Field label="Notes">
-              <textarea className={inputClass} rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Anything the super admin should know" />
+              <textarea className={inputClass} rows={3} value={form.notes} onChange={(e) => setField("notes", e.target.value)} placeholder="Anything the super admin should know" />
             </Field>
           </div>
         </div>

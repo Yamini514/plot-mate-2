@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
   PageHeader, Card, Button, Badge, Segmented, Table, Th, SortTh, Td, Tr,
-  Modal, ConfirmDialog, Field, inputClass, Pagination,
+  Modal, ConfirmDialog, Field, inputClass, Pagination, ActionMenu,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api, normalizeList } from "@/lib/api";
@@ -170,13 +170,13 @@ export default function AnnouncementsPage() {
                 </Td>
                 <Td><Badge tone={STATUS_TONE[a.status] ?? "slate"}>{a.status}</Badge></Td>
                 <Td>
-                  <div className="flex justify-end gap-1.5">
-                    {a.status !== "published" && (
-                      <Button variant="secondary" icon="send" loading={busy} onClick={() => publish(a)}>Publish</Button>
-                    )}
-                    <Button variant="secondary" icon="pencil" onClick={() => openEdit(a)}>Edit</Button>
-                    <Button variant="ghost" icon="trash-2" onClick={() => setDel(a)} />
-                  </div>
+                  <ActionMenu
+                    items={[
+                      a.status !== "published" && { label: "Publish", icon: "send", loading: busy, onClick: () => publish(a) },
+                      { label: "Edit", icon: "pencil", onClick: () => openEdit(a) },
+                      { label: "Delete", icon: "trash-2", tone: "danger", onClick: () => setDel(a) },
+                    ]}
+                  />
                 </Td>
               </Tr>
             ))}

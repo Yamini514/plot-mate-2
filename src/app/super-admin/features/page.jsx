@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { PageHeader, Card, Badge, EmptyState, Button, Modal, Field, inputClass, ConfirmDialog } from "@/components/ui";
+import { PageHeader, Card, Badge, EmptyState, Button, Modal, Field, inputClass, inputErrorClass, ConfirmDialog, ActionMenu } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { cn, formatDate } from "@/lib/utils";
+import { presence, collect, hasErrors } from "@/lib/validate";
 
 const EMPTY_FEATURE = { key: "", label: "", description: "", defaultOn: true, navHrefs: "" };
 
@@ -43,17 +44,29 @@ export default function FeaturesPage() {
   // Catalogue management (add / edit / remove feature definitions).
   const [editor, setEditor] = useState(null); // { feature } or { } for new
   const [form, setForm] = useState(EMPTY_FEATURE);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
 
-  const openNew = () => { setForm(EMPTY_FEATURE); setEditor({}); };
+  const setField = (key, value) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    setErrors((e) => (e[key] ? { ...e, [key]: undefined } : e));
+  };
+
+  const openNew = () => { setForm(EMPTY_FEATURE); setErrors({}); setEditor({}); };
   const openEdit = (f) => {
     setForm({ key: f.key, label: f.label, description: f.description ?? "", defaultOn: !!f.defaultOn, navHrefs: (f.navHrefs ?? []).join(", ") });
+    setErrors({});
     setEditor({ feature: f });
   };
 
   const saveFeature = async () => {
-    if (!form.label.trim() || (!editor.feature && !form.key.trim())) return toast("Key and label are required", "error");
+    const errs = collect({
+      label: presence(form.label, "Label"),
+      key: editor.feature ? "" : presence(form.key, "Key"),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     const payload = { label: form.label.trim(), description: form.description.trim() || null, defaultOn: form.defaultOn,
       navHrefs: form.navHrefs.split(",").map((s) => s.trim()).filter(Boolean) };
@@ -161,9 +174,13 @@ export default function FeaturesPage() {
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      <button title="Edit feature" onClick={() => openEdit(f)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><Icon name="pencil" size={14} /></button>
-                      <button title="Remove feature" onClick={() => setConfirmDel(f)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Icon name="trash-2" size={14} /></button>
                       <Switch on={!!state.on} busy={busyKey === f.key} onChange={(next) => toggle(f.key, next)} />
+                      <ActionMenu
+                        items={[
+                          { label: "Edit feature", icon: "pencil", onClick: () => openEdit(f) },
+                          { label: "Remove feature", icon: "trash-2", tone: "danger", onClick: () => setConfirmDel(f) },
+                        ]}
+                      />
                     </div>
                   </li>
                 );
@@ -177,17 +194,17 @@ export default function FeaturesPage() {
         footer={<><Button variant="secondary" onClick={() => setEditor(null)}>Cancel</Button><Button icon="check" loading={saving} onClick={saveFeature}>{editor?.feature ? "Save" : "Add"}</Button></>}>
         <div className="space-y-3">
           {!editor?.feature && (
-            <Field label="Key" hint="Lowercase id, e.g. marketplace. Used by route guards — can't change later.">
-              <input className={inputClass} value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} placeholder="e.g. events" />
+            <Field label="Key" required error={errors.key} hint="Lowercase id, e.g. marketplace. Used by route guards — can't change later.">
+              <input className={cn(inputClass, errors.key && inputErrorClass)} value={form.key} onChange={(e) => setField("key", e.target.value)} placeholder="e.g. events" />
             </Field>
           )}
-          <Field label="Label"><input className={inputClass} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="Events Module" /></Field>
-          <Field label="Description"><input className={inputClass} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
+          <Field label="Label" required error={errors.label}><input className={cn(inputClass, errors.label && inputErrorClass)} value={form.label} onChange={(e) => setField("label", e.target.value)} placeholder="Events Module" /></Field>
+          <Field label="Description"><input className={inputClass} value={form.description} onChange={(e) => setField("description", e.target.value)} /></Field>
           <Field label="Gated nav links" hint="Comma-separated venture-admin hrefs to hide when off, e.g. /admin/events">
-            <input className={inputClass} value={form.navHrefs} onChange={(e) => setForm({ ...form, navHrefs: e.target.value })} placeholder="/admin/events" />
+            <input className={inputClass} value={form.navHrefs} onChange={(e) => setField("navHrefs", e.target.value)} placeholder="/admin/events" />
           </Field>
           <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={form.defaultOn} onChange={(e) => setForm({ ...form, defaultOn: e.target.checked })} />
+            <input type="checkbox" checked={form.defaultOn} onChange={(e) => setField("defaultOn", e.target.checked)} />
             On by default for new ventures
           </label>
           <p className="text-xs text-slate-400">Note: backend route enforcement applies to built-in keys (maintenance, complaints, visitors, facility_booking). New keys gate the nav links you list above.</p>
