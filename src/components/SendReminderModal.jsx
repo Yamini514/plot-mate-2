@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils";
 // The real delivery channels the backend understands, plus an "All"
 // convenience that fans out to every channel at once.
 export const REMINDER_CHANNELS = [
-  { id: "whatsapp", label: "WhatsApp", icon: "message-circle", hint: "Instant chat message" },
   { id: "email", label: "Email", icon: "mail", hint: "To registered email" },
 ];
 
@@ -18,7 +17,7 @@ export const REMINDER_CHANNELS = [
  *
  *   onConfirm(channels: string[]) — receives the resolved list of channel ids.
  */
-export function SendReminderModal({ open, onClose, onConfirm, title = "Send reminder", recipientLabel, amountLabel, sending = false, defaultChannels = ["whatsapp"], confirmLabel }) {
+export function SendReminderModal({ open, onClose, onConfirm, title = "Send reminder", recipientLabel, amountLabel, sending = false, defaultChannels = ["email"], confirmLabel }) {
   const [selected, setSelected] = useState(() => new Set(defaultChannels));
 
   // Reset to the intended default channels each time the dialog opens so a fresh

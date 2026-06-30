@@ -21,10 +21,11 @@ import {
   inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { useAuth } from "@/lib/auth";
+import { presence, collect, hasErrors } from "@/lib/validate";
 import { useSettings } from "@/lib/useSettings";
 import { formatDate } from "@/lib/utils";
 import { uploadDocument, formatBytes } from "@/lib/upload";
@@ -72,6 +73,8 @@ export default function ComplaintsPage() {
   const [uploading, setUploading] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
+  const [noteErrors, setNoteErrors] = useState({});
+  const [reopenErrors, setReopenErrors] = useState({});
   const fileRef = useRef(null);
 
   // Full detail (timeline + attachments) for the open complaint.
@@ -97,18 +100,42 @@ export default function ComplaintsPage() {
   };
 
   const addNote = async () => {
-    if (!note.trim()) { toast("Add a note", "error"); return; }
-    await act("note", { body: note.trim(), internal }, "Note added");
-    setNote("");
+    const errs = collect({ note: presence(note, "Note") });
+    setNoteErrors(errs);
+    if (hasErrors(errs)) return;
+    if (!selected) return;
+    setBusyAction("note");
+    try {
+      await api.post(`/admin/complaints/${selected.dbId}/note`, { body: note.trim(), internal });
+      toast("Note added");
+      refresh();
+      setNote("");
+    } catch (e) {
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setNoteErrors(fe);
+      else toast(e.message || "Action failed", "error");
+    } finally { setBusyAction(null); }
   };
 
   const escalate = () => act("escalate", {}, "Escalated");
 
   const doReopen = async () => {
-    if (reopenReason.trim().length < 3) { toast("Add a reason (min 3 chars)", "error"); return; }
-    await act("reopen", { reason: reopenReason.trim() }, "Reopened");
-    setReopenOpen(false);
-    setReopenReason("");
+    const errs = collect({ reopenReason: presence(reopenReason, "Reason") });
+    setReopenErrors(errs);
+    if (hasErrors(errs)) return;
+    if (!selected) return;
+    setBusyAction("reopen");
+    try {
+      await api.post(`/admin/complaints/${selected.dbId}/reopen`, { reason: reopenReason.trim() });
+      toast("Reopened");
+      refresh();
+      setReopenOpen(false);
+      setReopenReason("");
+    } catch (e) {
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setReopenErrors(fe);
+      else toast(e.message || "Action failed", "error");
+    } finally { setBusyAction(null); }
   };
 
   const attachFile = async (file) => {
@@ -279,7 +306,7 @@ export default function ComplaintsPage() {
 
       <Modal
         open={!!selected}
-        onClose={() => setSelected(null)}
+        onClose={() => { setSelected(null); setNoteErrors({}); }}
         title={selected?.title ?? ""}
         wide
         footer={
@@ -288,7 +315,7 @@ export default function ComplaintsPage() {
               Delete
             </Button>
             {["resolved", "closed"].includes(detail?.status ?? selected?.status) ? (
-              <Button variant="secondary" icon="rotate-ccw" loading={busyAction === "reopen"} onClick={() => setReopenOpen(true)}>
+              <Button variant="secondary" icon="rotate-ccw" loading={busyAction === "reopen"} onClick={() => { setReopenErrors({}); setReopenOpen(true); }}>
                 Reopen
               </Button>
             ) : (
@@ -414,7 +441,7 @@ export default function ComplaintsPage() {
 
             {/* Add note */}
             <div className="border-t border-slate-100 pt-4">
-              <Field label="Add note">
+              <Field label="Add note" error={noteErrors.note}>
                 <textarea className={inputClass} rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Internal note or update…" />
               </Field>
               <div className="mt-2 flex items-center justify-between">
@@ -432,7 +459,7 @@ export default function ComplaintsPage() {
       {/* Reopen reason */}
       <Modal
         open={reopenOpen}
-        onClose={() => setReopenOpen(false)}
+        onClose={() => { setReopenOpen(false); setReopenErrors({}); }}
         title="Reopen complaint"
         footer={
           <>
@@ -441,7 +468,7 @@ export default function ComplaintsPage() {
           </>
         }
       >
-        <Field label="Reason" hint="Recorded in the timeline and audit trail.">
+        <Field label="Reason" hint="Recorded in the timeline and audit trail." error={reopenErrors.reopenReason}>
           <textarea className={inputClass} rows={3} value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} placeholder="Why is this being reopened?" />
         </Field>
       </Modal>

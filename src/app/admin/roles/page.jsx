@@ -5,9 +5,10 @@ import {
   PageHeader, Card, Button, Badge, Modal, Field, EmptyState, inputClass, ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
+import { presence, collect, hasErrors } from "@/lib/validate";
 
 // Friendly labels for permission modules (App::Models::Role::MODULES keys).
 const MODULE_LABEL = {
@@ -41,6 +42,7 @@ export default function RolesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [busyId, setBusyId] = useState(null);
@@ -78,17 +80,23 @@ export default function RolesPage() {
 
   const approverOptions = ["admin", ...roles.filter((r) => r.active !== false).map((r) => r.name)];
 
-  const openCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); };
+  const openCreate = () => { setEditing(null); setForm(emptyForm); setErrors({}); setOpen(true); };
   const openEdit = (r) => {
     setEditing(r);
     setForm({ name: r.name ?? "", description: r.description ?? "", permissions: r.permissions ?? [] });
+    setErrors({});
     setOpen(true);
   };
   const togglePerm = (p) =>
     setForm((f) => ({ ...f, permissions: f.permissions.includes(p) ? f.permissions.filter((x) => x !== p) : [...f.permissions, p] }));
 
   const save = async () => {
-    if (!form.name.trim()) return toast("Role name is required", "error");
+    const errs = collect({
+      name: presence(form.name, "Role name"),
+      permissions: form.permissions.length ? "" : "Select at least one permission",
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       const payload = { name: form.name.trim(), description: form.description.trim() || null, permissions: form.permissions };
@@ -97,7 +105,8 @@ export default function RolesPage() {
       toast(editing ? "Role updated" : "Role created");
       setOpen(false); setEditing(null); setForm(emptyForm); reload();
     } catch (e) {
-      toast(e.message || "Could not save role", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe); else toast(e.message || "Could not save role", "error");
     } finally { setSaving(false); }
   };
 
@@ -204,11 +213,12 @@ export default function RolesPage() {
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Role name"><input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Treasurer" /></Field>
+            <Field label="Role name" required error={errors.name}><input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Treasurer" /></Field>
             <Field label="Description"><input className={inputClass} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Optional" /></Field>
           </div>
           <div>
             <span className="mb-1.5 block text-xs font-medium text-slate-600">Permissions — pick the actions this role can perform in each module</span>
+            {errors.permissions && <span className="mt-1 mb-1.5 block text-xs text-rose-500">{errors.permissions}</span>}
             <div className="max-h-[50vh] space-y-2 overflow-y-auto rounded-lg border border-slate-100 p-2">
               {Object.entries(modules).map(([mod, actions]) => {
                 const keys = actions.map((a) => `${mod}.${a}`);

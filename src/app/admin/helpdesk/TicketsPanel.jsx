@@ -28,10 +28,11 @@ import {
   ASSIGNMENT_MAP,
   SLA_HOURS,
 } from "@/lib/helpdesk-data";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { WorkOrderMaterials } from "@/components/WorkOrderMaterials";
 import { formatDate, formatINR } from "@/lib/utils";
+import { presence, collect, hasErrors } from "@/lib/validate";
 
 const catMeta = (v) => CATEGORIES.find((c) => c.value === v) ?? { label: v, icon: "circle-help" };
 
@@ -66,6 +67,7 @@ export function TicketsPanel() {
   const [picked, setPicked] = useState(() => new Set());
   const [active, setActive] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createErrors, setCreateErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(null);
   const [drawerBusy, setDrawerBusy] = useState(null);
@@ -259,10 +261,17 @@ export function TicketsPanel() {
   const createTicket = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    const errs = collect({
+      subject: presence(f.get("subject"), "Subject"),
+      category: presence(f.get("category"), "Category"),
+      priority: presence(f.get("priority"), "Priority"),
+    });
+    setCreateErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       const { data } = await api.post("/admin/helpdesk/tickets", {
-        subject: f.get("subject") || "Untitled request",
+        subject: f.get("subject"),
         description: f.get("description") || "",
         category: f.get("category"),
         priority: f.get("priority"),
@@ -272,7 +281,9 @@ export function TicketsPanel() {
       setCreateOpen(false);
       reload();
     } catch (err) {
-      toast(err.message || "Could not create ticket", "error");
+      const fe = fieldErrors(err);
+      if (hasErrors(fe)) setCreateErrors(fe);
+      else toast(err.message || "Could not create ticket", "error");
     } finally {
       setSaving(false);
     }
@@ -308,7 +319,7 @@ export function TicketsPanel() {
         actions={
           <>
             <Button variant="secondary" icon="download" onClick={exportCSV}>Export</Button>
-            <Button icon="plus" onClick={() => setCreateOpen(true)}>New ticket</Button>
+            <Button icon="plus" onClick={() => { setCreateErrors({}); setCreateOpen(true); }}>New ticket</Button>
           </>
         }
       />
@@ -684,19 +695,19 @@ export function TicketsPanel() {
       {/* New ticket */}
       <Modal
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => { setCreateOpen(false); setCreateErrors({}); }}
         title="New service ticket"
         wide
         footer={
           <>
-            <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => { setCreateOpen(false); setCreateErrors({}); }}>Cancel</Button>
             <Button type="submit" form="new-ticket" icon="send" loading={saving}>Create ticket</Button>
           </>
         }
       >
         <form id="new-ticket" onSubmit={createTicket} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field label="Subject">
+            <Field label="Subject" error={createErrors.subject}>
               <input name="subject" required className={inputClass} placeholder="e.g. Lift not working in B-block" />
             </Field>
           </div>
@@ -705,12 +716,12 @@ export function TicketsPanel() {
               <textarea name="description" rows={2} className={inputClass} placeholder="Describe the issue…" />
             </Field>
           </div>
-          <Field label="Category">
+          <Field label="Category" error={createErrors.category}>
             <select name="category" defaultValue="maintenance" className={inputClass}>
               {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </Field>
-          <Field label="Priority">
+          <Field label="Priority" error={createErrors.priority}>
             <select name="priority" defaultValue="medium" className={inputClass}>
               {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>

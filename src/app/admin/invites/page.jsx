@@ -5,10 +5,11 @@ import {
   PageHeader, Card, Button, Badge, Segmented, Table, Th, Td, Tr, Modal, Field, inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate, digitsOnly } from "@/lib/utils";
+import { email as vemail, presence, collect, hasErrors } from "@/lib/validate";
 
 const STATUS_TONE = { pending: "amber", accepted: "green", revoked: "slate", expired: "rose" };
 const ROLE_OPTS = [
@@ -27,14 +28,18 @@ export default function InvitesPage() {
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState(null); // { email, inviteUrl }
   const [busyId, setBusyId] = useState(null);
 
   const sendInvite = async () => {
-    if (!form.email.trim() && !form.fullName.trim()) {
-      return toast("Enter at least an email or a name", "error");
-    }
+    const errs = collect({
+      email: vemail(form.email),
+      role: presence(form.role === "" || form.role == null ? "" : String(form.role), "Role"),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       const { data } = await api.post("/admin/invites", {
@@ -48,7 +53,9 @@ export default function InvitesPage() {
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not create invite", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not create invite", "error");
     } finally {
       setSaving(false);
     }
@@ -80,7 +87,7 @@ export default function InvitesPage() {
       <PageHeader
         title="Invites"
         subtitle="Invite owners and committee members to complete their own profile"
-        actions={<Button icon="user-plus" onClick={() => setOpen(true)}>New invite</Button>}
+        actions={<Button icon="user-plus" onClick={() => { setForm(emptyForm); setErrors({}); setOpen(true); }}>New invite</Button>}
       />
 
       <Card>
@@ -156,8 +163,8 @@ export default function InvitesPage() {
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Full name"><input className={inputClass} value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="Recipient name" /></Field>
-          <Field label="Email"><input type="email" className={inputClass} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="they@example.com" /></Field>
-          <Field label="Role"><select className={inputClass} value={form.role} onChange={(e) => setForm({ ...form, role: Number(e.target.value) })}>{ROLE_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></Field>
+          <Field label="Email" required error={errors.email}><input type="email" className={inputClass} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="they@example.com" /></Field>
+          <Field label="Role" required error={errors.role}><select className={inputClass} value={form.role} onChange={(e) => setForm({ ...form, role: Number(e.target.value) })}>{ROLE_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></Field>
           <Field label="Plot ID (optional)" hint="Pre-link this owner to a plot"><input className={inputClass} value={form.plotId} onChange={(e) => setForm({ ...form, plotId: digitsOnly(e.target.value, 12) })} placeholder="e.g. 142" /></Field>
         </div>
         <p className="mt-3 text-xs text-slate-400">An invite link is generated. If an email is set, we also email it (using your venture&rsquo;s SMTP). The recipient sets a password and submits their profile + KYC for your verification.</p>

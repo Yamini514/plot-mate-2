@@ -21,7 +21,6 @@ import { formatINR, formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 const channels = [
-  { id: "whatsapp", label: "WhatsApp", icon: "message-circle" },
   { id: "email", label: "Email", icon: "mail" },
 ];
 
@@ -36,13 +35,14 @@ export default function RemindersPage() {
   const overdueCount = bsum?.defaulters ?? 0;
   const stats = { pendingCount };
 
-  const [channel, setChannel] = useState("whatsapp");
+  const [channel, setChannel] = useState("email");
   const [audience, setAudience] = useState("pending");
   const [when, setWhen] = useState("now");
   const [customAt, setCustomAt] = useState("");
   const [sending, setSending] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [autoBusy, setAutoBusy] = useState(false);
+  const [errors, setErrors] = useState({});
 
   // Resolve the chosen schedule into an absolute ISO timestamp (null = send now).
   const resolveScheduledFor = () => {
@@ -60,9 +60,10 @@ export default function RemindersPage() {
   // otherwise the reminder would be saved "scheduled" with no time (the bug).
   const openConfirm = () => {
     if (when === "custom") {
-      if (!customAt) return toast("Pick a date and time for the custom schedule", "error");
-      if (new Date(customAt).getTime() <= Date.now()) return toast("Choose a date and time in the future", "error");
+      if (!customAt) return setErrors({ customAt: "Pick a date and time for the custom schedule" });
+      if (new Date(customAt).getTime() <= Date.now()) return setErrors({ customAt: "Choose a date and time in the future" });
     }
+    setErrors({});
     setConfirmOpen(true);
   };
 
@@ -235,14 +236,16 @@ export default function RemindersPage() {
                     type="datetime-local"
                     value={customAt}
                     min={localDatetimeMin}
-                    onChange={(e) => setCustomAt(e.target.value)}
+                    onChange={(e) => { setCustomAt(e.target.value); setErrors({}); }}
                     className={inputClass}
                   />
-                  {customAt && (
+                  {errors.customAt ? (
+                    <p className="mt-1 text-xs text-rose-500">{errors.customAt}</p>
+                  ) : customAt ? (
                     <p className="mt-1 text-xs text-slate-400">
                       Will be scheduled for {new Date(customAt).toLocaleString()}
                     </p>
-                  )}
+                  ) : null}
                 </div>
               )}
               {when === "tomorrow" && (

@@ -23,7 +23,7 @@ export default function ForgotPasswordPage() {
   const router = useRouter();
 
   const [step, setStep] = useState("email"); // email | verify | reset | done
-  const [channel, setChannel] = useState("email"); // delivery channel for the code
+  const [channel] = useState("email"); // delivery channel for the code (WhatsApp disabled)
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [token, setToken] = useState("");
@@ -262,43 +262,6 @@ export default function ForgotPasswordPage() {
                     />
                   </div>
                 </label>
-
-                {/* Delivery channel — email the code, or send it to the WhatsApp
-                    number registered on the account. */}
-                <div>
-                  <span className="mb-1.5 block text-xs font-medium text-slate-600">
-                    Send the code via
-                  </span>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      { id: "email", label: "Email", icon: "mail" },
-                      { id: "whatsapp", label: "WhatsApp", icon: "message-circle" },
-                    ].map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => {
-                          setChannel(c.id);
-                          setError("");
-                        }}
-                        className={cn(
-                          "flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors",
-                          channel === c.id
-                            ? "border-brand-400 bg-brand-50 text-brand-700"
-                            : "border-slate-200 text-slate-600 hover:bg-slate-50",
-                        )}
-                      >
-                        <Icon name={c.icon} size={16} />
-                        {c.label}
-                      </button>
-                    ))}
-                  </div>
-                  {channel === "whatsapp" && (
-                    <p className="mt-1.5 text-xs text-slate-400">
-                      We’ll message the phone number registered on your account.
-                    </p>
-                  )}
-                </div>
 
                 <Banner error={error} notice={notice} />
 

@@ -6,10 +6,11 @@ import {
   Field, inputClass, Progress,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatINR, formatDate } from "@/lib/utils";
+import { presence, number as vnumber, dateRange, collect, hasErrors } from "@/lib/validate";
 
 const STATUS_TONE = {
   planned: "slate", active: "sky", on_hold: "amber",
@@ -29,6 +30,7 @@ export default function ProjectsPage() {
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
   const { data: vraw } = useApi("/admin/staff/eligible");
@@ -38,17 +40,24 @@ export default function ProjectsPage() {
   const { data: detail, reload: reloadDetail } = useApi(openId ? `/admin/projects/${openId}` : null);
   const [upd, setUpd] = useState(emptyUpdate);
   const [busy, setBusy] = useState(false);
+  const [updErrors, setUpdErrors] = useState({});
   const [ms, setMs] = useState({ title: "", dueOn: "" }); // new milestone
+  const [msErrors, setMsErrors] = useState({});
   const [photoUrl, setPhotoUrl] = useState("");
   const [comment, setComment] = useState("");
 
   const addMilestone = async () => {
-    if (!ms.title.trim()) return toast("Milestone title is required", "error");
+    const errs = collect({ title: presence(ms.title, "Milestone title") });
+    setMsErrors(errs);
+    if (hasErrors(errs)) return;
     try {
       await api.post(`/admin/projects/${openId}/milestones`, { title: ms.title.trim(), dueOn: ms.dueOn || null });
       setMs({ title: "", dueOn: "" });
       reloadDetail();
-    } catch (e) { toast(e.message || "Could not add milestone", "error"); }
+    } catch (e) {
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setMsErrors(fe); else toast(e.message || "Could not add milestone", "error");
+    }
   };
   const toggleMilestone = async (m) => {
     try { await api.post(`/admin/projects/${openId}/milestones/${m.id}/toggle`, {}); reloadDetail(); }
@@ -78,7 +87,13 @@ export default function ProjectsPage() {
   };
 
   const createProject = async () => {
-    if (!form.name.trim()) return toast("A project name is required", "error");
+    const errs = collect({
+      name: presence(form.name, "Project name"),
+      budget: vnumber(form.budget, { positive: true, required: false, label: "Budget" }),
+      targetDate: dateRange(form.startDate, form.targetDate),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       await api.post("/admin/projects", {
@@ -94,11 +109,17 @@ export default function ProjectsPage() {
       toast("Project created");
       setForm(emptyForm); setOpen(false); reload();
     } catch (e) {
-      toast(e.message || "Could not create project", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe); else toast(e.message || "Could not create project", "error");
     } finally { setSaving(false); }
   };
 
   const postUpdate = async () => {
+    const errs = collect({
+      percent: vnumber(upd.percent, { min: 0, max: 100, required: false, label: "Progress %" }),
+    });
+    setUpdErrors(errs);
+    if (hasErrors(errs)) return;
     setBusy(true);
     try {
       await api.post(`/admin/projects/${openId}/update`, {
@@ -112,7 +133,8 @@ export default function ProjectsPage() {
       setUpd(emptyUpdate);
       reloadDetail(); reload();
     } catch (e) {
-      toast(e.message || "Could not post update", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setUpdErrors(fe); else toast(e.message || "Could not post update", "error");
     } finally { setBusy(false); }
   };
 
@@ -132,7 +154,7 @@ export default function ProjectsPage() {
       <PageHeader
         title="Projects"
         subtitle="Capital works — budget, progress, delays and records"
-        actions={<Button icon="plus" onClick={() => setOpen(true)}>New project</Button>}
+        actions={<Button icon="plus" onClick={() => { setForm(emptyForm); setErrors({}); setOpen(true); }}>New project</Button>}
       />
 
       <Card>
@@ -209,9 +231,9 @@ export default function ProjectsPage() {
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2"><Field label="Name"><input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Clubhouse renovation" /></Field></div>
+          <div className="sm:col-span-2"><Field label="Name" required error={errors.name}><input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Clubhouse renovation" /></Field></div>
           <div className="sm:col-span-2"><Field label="Description"><textarea className={inputClass} rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field></div>
-          <Field label="Budget (₹)"><input type="number" className={inputClass} value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} /></Field>
+          <Field label="Budget (₹)" error={errors.budget}><input type="number" className={inputClass} value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} /></Field>
           <Field label="Vendor / contractor">
             <select className={inputClass} value={form.vendorStaffId} onChange={(e) => setForm({ ...form, vendorStaffId: e.target.value })}>
               <option value="">{vendors.length ? "Unassigned" : "No verified vendors"}</option>
@@ -221,7 +243,7 @@ export default function ProjectsPage() {
           <Field label="Affected areas" hint="Comma-separated"><input className={inputClass} value={form.affectedAreas} onChange={(e) => setForm({ ...form, affectedAreas: e.target.value })} placeholder="Clubhouse, Phase 2 road" /></Field>
           <Field label="Affected plots" hint="Comma-separated plot numbers"><input className={inputClass} value={form.affectedPlots} onChange={(e) => setForm({ ...form, affectedPlots: e.target.value })} placeholder="A-12, A-13" /></Field>
           <Field label="Start date"><input type="date" className={inputClass} value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></Field>
-          <Field label="Target date"><input type="date" className={inputClass} value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} /></Field>
+          <Field label="Target date" error={errors.targetDate}><input type="date" className={inputClass} value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} /></Field>
         </div>
       </Modal>
 
@@ -285,7 +307,7 @@ export default function ProjectsPage() {
                 ))}
               </div>
               <div className="mt-3 flex items-end gap-2">
-                <Field label="New milestone"><input className={inputClass} value={ms.title} onChange={(e) => setMs({ ...ms, title: e.target.value })} placeholder="e.g. Tiling complete" /></Field>
+                <Field label="New milestone" error={msErrors.title}><input className={inputClass} value={ms.title} onChange={(e) => setMs({ ...ms, title: e.target.value })} placeholder="e.g. Tiling complete" /></Field>
                 <input type="date" className={inputClass + " w-40"} value={ms.dueOn} onChange={(e) => setMs({ ...ms, dueOn: e.target.value })} />
                 <Button size="sm" variant="secondary" icon="plus" onClick={addMilestone}>Add</Button>
               </div>
@@ -315,7 +337,7 @@ export default function ProjectsPage() {
                 <Field label="Title"><input className={inputClass} value={upd.title} onChange={(e) => setUpd({ ...upd, title: e.target.value })} placeholder="e.g. Foundation done" /></Field>
                 <Field label="Note"><textarea className={inputClass} rows={2} value={upd.note} onChange={(e) => setUpd({ ...upd, note: e.target.value })} /></Field>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Progress %"><input type="number" min={0} max={100} className={inputClass} value={upd.percent} onChange={(e) => setUpd({ ...upd, percent: e.target.value })} /></Field>
+                  <Field label="Progress %" error={updErrors.percent}><input type="number" min={0} max={100} className={inputClass} value={upd.percent} onChange={(e) => setUpd({ ...upd, percent: e.target.value })} /></Field>
                   <Field label="Spend this update (₹)"><input type="number" className={inputClass} value={upd.spent} onChange={(e) => setUpd({ ...upd, spent: e.target.value })} /></Field>
                 </div>
                 <label className="flex items-center gap-2 text-sm text-slate-600">

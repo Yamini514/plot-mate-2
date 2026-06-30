@@ -13,11 +13,12 @@ import {
   ConfirmDialog,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
 import { uploadImage } from "@/lib/upload";
+import { presence, collect, hasErrors } from "@/lib/validate";
 
 const UPLOAD_CATEGORIES = ["Road work", "Street lights", "Compound wall", "Plantation", "Drainage", "Other"];
 
@@ -28,6 +29,7 @@ export default function AdminPhotosPage() {
   const [cat, setCat] = useState("all");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ category: "Road work", customCategory: "", caption: "" });
+  const [errors, setErrors] = useState({});
   const [imageUrl, setImageUrl] = useState("");
   const [processing, setProcessing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -43,6 +45,7 @@ export default function AdminPhotosPage() {
 
   const resetForm = () => {
     setForm({ category: "Road work", customCategory: "", caption: "" });
+    setErrors({});
     setImageUrl("");
   };
 
@@ -71,10 +74,11 @@ export default function AdminPhotosPage() {
 
   const upload = async () => {
     const category = form.category === "Other" ? form.customCategory.trim() : form.category;
-    if (form.category === "Other" && !category) {
-      toast("Enter the photo category", "error");
-      return;
-    }
+    const errs = collect({
+      customCategory: form.category === "Other" ? presence(category, "Category") : "",
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     if (!imageUrl) {
       toast("Choose an image to upload", "error");
       return;
@@ -90,7 +94,9 @@ export default function AdminPhotosPage() {
       closeModal();
       reload();
     } catch (e) {
-      toast(e.message || "Upload failed", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Upload failed", "error");
     } finally {
       setSaving(false);
     }
@@ -116,7 +122,7 @@ export default function AdminPhotosPage() {
       <PageHeader
         title="Site Photos"
         subtitle={`${photos.length} photos documenting construction progress`}
-        actions={<Button icon="upload" onClick={() => setOpen(true)}>Upload</Button>}
+        actions={<Button icon="upload" onClick={() => { resetForm(); setOpen(true); }}>Upload</Button>}
       />
 
       <div className="mb-4 flex flex-wrap gap-1">
@@ -215,7 +221,7 @@ export default function AdminPhotosPage() {
             </select>
           </Field>
           {form.category === "Other" && (
-            <Field label="Enter category">
+            <Field label="Enter category" required error={errors.customCategory}>
               <input className={inputClass} placeholder="e.g. Clubhouse" value={form.customCategory} onChange={(e) => setForm({ ...form, customCategory: e.target.value })} />
             </Field>
           )}

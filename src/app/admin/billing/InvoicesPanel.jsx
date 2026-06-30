@@ -26,6 +26,7 @@ import { api, normalizeList } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { feeCategory } from "@/lib/billing-data";
 import { formatINR } from "@/lib/utils";
+import { presence, text as vtext, number as vnumber, collect, hasErrors } from "@/lib/validate";
 
 const FILTERS = [
   { value: "all", label: "All" },
@@ -489,7 +490,18 @@ function ChargeOwnerModal({ open, plots, fees, onClose, onCharge, saving }) {
   const [plotId, setPlotId] = useState("");
   const [planId, setPlanId] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [errors, setErrors] = useState({});
   const fee = fees.find((f) => String(f.dbId) === String(planId));
+
+  const submit = () => {
+    const errs = collect({
+      plotId: presence(plotId, "Owner / Plot"),
+      planId: presence(planId, "Fee"),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
+    onCharge({ plotId, planId, dueDate });
+  };
 
   return (
     <Modal
@@ -499,7 +511,7 @@ function ChargeOwnerModal({ open, plots, fees, onClose, onCharge, saving }) {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button icon="hand-coins" loading={saving} onClick={() => onCharge({ plotId, planId, dueDate })}>
+          <Button icon="hand-coins" loading={saving} onClick={submit}>
             Charge{fee ? ` ${formatINR(fee.amount)}` : ""}
           </Button>
         </>
@@ -509,7 +521,7 @@ function ChargeOwnerModal({ open, plots, fees, onClose, onCharge, saving }) {
         <p className="text-sm text-slate-500">
           Issues a single invoice (payment slip) to one owner — for one-off fees like transfer, NOC, penalties or ad-hoc charges that don&apos;t apply to every plot.
         </p>
-        <Field label="Owner / Plot">
+        <Field label="Owner / Plot" error={errors.plotId}>
           <select value={plotId} onChange={(e) => setPlotId(e.target.value)} className={inputClass}>
             <option value="">Select an owner…</option>
             {plots.map((p) => (
@@ -517,7 +529,7 @@ function ChargeOwnerModal({ open, plots, fees, onClose, onCharge, saving }) {
             ))}
           </select>
         </Field>
-        <Field label="Fee">
+        <Field label="Fee" error={errors.planId}>
           <select value={planId} onChange={(e) => setPlanId(e.target.value)} className={inputClass}>
             <option value="">Select a fee…</option>
             {fees.map((f) => (
@@ -550,6 +562,14 @@ function GenerateModal({ open, plans, onClose, onGenerate, saving }) {
   const [planId, setPlanId] = useState("");
   const [period, setPeriod] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [errors, setErrors] = useState({});
+
+  const submit = () => {
+    const errs = collect({ planId: presence(planId, "Plan") });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
+    onGenerate({ planId, period, dueDate });
+  };
 
   return (
     <Modal
@@ -559,7 +579,7 @@ function GenerateModal({ open, plans, onClose, onGenerate, saving }) {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button icon="file-plus" loading={saving} onClick={() => onGenerate({ planId, period, dueDate })}>Generate</Button>
+          <Button icon="file-plus" loading={saving} onClick={submit}>Generate</Button>
         </>
       }
     >
@@ -567,7 +587,7 @@ function GenerateModal({ open, plans, onClose, onGenerate, saving }) {
         <p className="text-sm text-slate-500">
           Creates one invoice per active plot for the selected plan. Plots already billed for this plan &amp; period are skipped — so re-running only adds <span className="font-medium text-slate-600">new owners</span>.
         </p>
-        <Field label="Plan">
+        <Field label="Plan" error={errors.planId}>
           <select value={planId} onChange={(e) => setPlanId(e.target.value)} className={inputClass}>
             <option value="">Select a plan…</option>
             {plans.map((p) => (
@@ -628,6 +648,18 @@ function PaymentForm({ invoice, onRecord, onWaive, saving }) {
 function WaiveModal({ invoice, onClose, onApply, saving }) {
   const [amount, setAmount] = useState(0);
   const [reason, setReason] = useState("");
+  const [errors, setErrors] = useState({});
+
+  const submit = () => {
+    const errs = collect({
+      amount: vnumber(amount, { positive: true, label: "Amount" }),
+      reason: vtext(reason, { min: 3, max: 500, label: "Reason" }),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
+    onApply({ invoice, amount, reason });
+  };
+
   return (
     <Modal
       open={!!invoice}
@@ -636,17 +668,17 @@ function WaiveModal({ invoice, onClose, onApply, saving }) {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button icon="badge-percent" loading={saving} onClick={() => onApply({ invoice, amount, reason })}>Apply</Button>
+          <Button icon="badge-percent" loading={saving} onClick={submit}>Apply</Button>
         </>
       }
     >
       {invoice && (
         <div className="space-y-4">
           <p className="text-sm text-slate-500">Reduce the balance on <span className="font-semibold text-slate-700">{invoice.id}</span> (currently {formatINR(invoice.balance)}).</p>
-          <Field label="Amount to waive (₹)">
+          <Field label="Amount to waive (₹)" error={errors.amount}>
             <input type="number" min="0" max={invoice.balance} value={amount} onChange={(e) => setAmount(e.target.value)} className={inputClass} />
           </Field>
-          <Field label="Reason">
+          <Field label="Reason" error={errors.reason}>
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Late fee waived — first default" className={inputClass} />
           </Field>
         </div>

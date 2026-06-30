@@ -14,10 +14,11 @@ import {
   inputClass,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
+import { text as vtext, presence, future, collect, hasErrors } from "@/lib/validate";
 
 const typeTone = {
   meeting: "sky",
@@ -29,7 +30,6 @@ const typeTone = {
 const CHANNELS = [
   { value: "in_app", label: "In-app", icon: "bell" },
   { value: "email", label: "Email", icon: "mail" },
-  { value: "whatsapp", label: "WhatsApp", icon: "message-circle" },
 ];
 
 const AUDIENCES = [
@@ -217,15 +217,18 @@ export default function AdminAnnouncementsPage() {
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [viewId, setViewId] = useState(null);
+  const [errors, setErrors] = useState({});
 
   const startCreate = () => {
     setEditingId(null);
     setForm(emptyForm);
+    setErrors({});
     setOpen(true);
   };
 
   const startEdit = (a) => {
     setEditingId(a.dbId);
+    setErrors({});
     setForm({
       title: a.title ?? "",
       type: a.type ?? "general",
@@ -250,10 +253,14 @@ export default function AdminAnnouncementsPage() {
     }));
 
   const publish = async () => {
-    if (!form.title.trim() || !form.body.trim()) {
-      toast("Title and message are required", "error");
-      return;
-    }
+    const errs = collect({
+      title: vtext(form.title, { min: 2, label: "Title" }),
+      body: presence(form.body, "Message"),
+      audienceValues: form.audienceType !== "all" ? presence(form.audienceValues, "Audience") : "",
+      scheduledAt: !editingId && form.scheduledAt ? future(form.scheduledAt, { label: "Schedule time" }) : "",
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       const payload = {
@@ -293,7 +300,9 @@ export default function AdminAnnouncementsPage() {
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not publish", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not publish", "error");
     } finally {
       setSaving(false);
     }
@@ -459,7 +468,7 @@ export default function AdminAnnouncementsPage() {
         }
       >
         <div className="space-y-4">
-          <Field label="Title">
+          <Field label="Title" error={errors.title}>
             <input className={inputClass} placeholder="Announcement title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </Field>
           <div className="grid grid-cols-2 gap-4">
@@ -480,12 +489,12 @@ export default function AdminAnnouncementsPage() {
           </div>
 
           {!editingId && (
-            <Field label="Schedule for later (optional)" hint="Leave blank to publish now; otherwise it goes live at this time.">
+            <Field label="Schedule for later (optional)" hint="Leave blank to publish now; otherwise it goes live at this time." error={errors.scheduledAt}>
               <input type="datetime-local" className={inputClass} value={form.scheduledAt} onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })} />
             </Field>
           )}
 
-          <Field label="Message">
+          <Field label="Message" error={errors.body}>
             <textarea rows={5} className={inputClass} placeholder="Write your announcement…" value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} />
           </Field>
 
@@ -502,6 +511,7 @@ export default function AdminAnnouncementsPage() {
               <Field
                 label={form.audienceType === "owners" ? "Plot numbers" : "Phases / blocks"}
                 hint="Comma-separated, e.g. Phase 1, Phase 2"
+                error={errors.audienceValues}
               >
                 <input className={inputClass} placeholder="Phase 1, Phase 2" value={form.audienceValues} onChange={(e) => setForm({ ...form, audienceValues: e.target.value })} />
               </Field>

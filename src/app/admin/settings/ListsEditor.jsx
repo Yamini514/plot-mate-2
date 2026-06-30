@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { Card, CardHeader, Button, Field, inputClass } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api } from "@/lib/api";
+import { api, fieldErrors } from "@/lib/api";
 import { useSettings } from "@/lib/useSettings";
 import { useToast } from "@/components/Toast";
+import { number as vnumber, collect, hasErrors } from "@/lib/validate";
 
 // Editable per-venture lists (Phase 6 — dynamic configuration). Each is a chip
 // list except the SLA map. Saved via PUT /admin/settings { lists } — the api
@@ -31,6 +32,7 @@ export function ListsEditor() {
   const toast = useToast();
   const [lists, setLists] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
 
   useEffect(() => {
     if (loading || lists) return;
@@ -53,11 +55,23 @@ export function ListsEditor() {
   const setSla = (k, v) => setLists({ ...lists, ticketSlaHours: { ...lists.ticketSlaHours, [k]: Number(v) || 0 } });
 
   const save = async () => {
+    const errs = collect(Object.fromEntries(
+      ["critical", "high", "medium", "low"].map((k) => [
+        `sla_${k}`, vnumber(lists.ticketSlaHours[k], { min: 0, integer: true, label: `${k} SLA` }),
+      ]),
+    ));
+    setErrors(errs);
+    if (hasErrors(errs)) { toast("Please fix the highlighted fields", "error"); return; }
     setSaving(true);
     try {
       await api.put("/admin/settings", { lists });
+      setErrors({});
       toast("Lists saved");
-    } catch (e) { toast(e.message || "Could not save", "error"); }
+    } catch (e) {
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not save", "error");
+    }
     finally { setSaving(false); }
   };
 
@@ -74,7 +88,7 @@ export function ListsEditor() {
           <p className="mb-2 text-sm font-semibold text-slate-700">Helpdesk SLA (hours by priority)</p>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {["critical", "high", "medium", "low"].map((k) => (
-              <Field key={k} label={k}>
+              <Field key={k} label={k} error={errors[`sla_${k}`]}>
                 <input type="number" min="0" className={inputClass} value={lists.ticketSlaHours[k] ?? 0} onChange={(e) => setSla(k, e.target.value)} />
               </Field>
             ))}

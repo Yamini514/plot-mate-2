@@ -15,9 +15,10 @@ import {
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { FREQUENCIES, PROPERTY_TYPES, FEE_CATEGORIES, feeCategory } from "@/lib/billing-data";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { formatINR } from "@/lib/utils";
+import { presence, number as vnumber, collect, hasErrors } from "@/lib/validate";
 
 const freqLabel = (v) => FREQUENCIES.find((f) => f.value === v)?.label ?? v;
 
@@ -41,6 +42,7 @@ export default function MaintenancePlans() {
   const [editing, setEditing] = useState(null);
   const [category, setCategory] = useState("maintenance");
   const [types, setTypes] = useState(PROPERTY_TYPES);
+  const [errors, setErrors] = useState({});
 
   // Per-category counts for the filter chips; only show chips that have fees
   // (plus an always-present "All"), so the strip stays relevant as it scales.
@@ -60,12 +62,14 @@ export default function MaintenancePlans() {
     setEditing(null);
     setCategory(catFilter === "all" ? "maintenance" : catFilter);
     setTypes(PROPERTY_TYPES);
+    setErrors({});
     setOpen(true);
   };
   const openEdit = (p) => {
     setEditing(p);
     setCategory(p.category || "maintenance");
     setTypes(p.propertyTypes);
+    setErrors({});
     setOpen(true);
   };
 
@@ -103,6 +107,15 @@ export default function MaintenancePlans() {
   const save = async (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    const errs = collect({
+      name: presence(f.get("name"), "Fee name"),
+      amount: vnumber(f.get("amount"), { positive: true, label: "Amount" }),
+      category: presence(f.get("category"), "Fee category"),
+      frequency: presence(f.get("frequency"), "Frequency"),
+      lateFeeAmount: vnumber(f.get("lateFeeAmount"), { min: 0, label: "Late fee amount" }),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     const data = {
       name: f.get("name") || "Untitled fee",
       description: f.get("description") || "",
@@ -127,7 +140,9 @@ export default function MaintenancePlans() {
       setOpen(false);
       reload();
     } catch (err) {
-      toast(err.message || "Could not save plan", "error");
+      const fe = fieldErrors(err);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(err.message || "Could not save plan", "error");
     } finally {
       setSaving(false);
     }
@@ -233,7 +248,7 @@ export default function MaintenancePlans() {
       >
         <form id="plan-form" onSubmit={save} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field label="Fee category">
+            <Field label="Fee category" error={errors.category}>
               <select name="category" value={category} onChange={(e) => setCategory(e.target.value)} className={inputClass}>
                 {FEE_CATEGORIES.map((c) => (
                   <option key={c.value} value={c.value}>{c.label}</option>
@@ -245,7 +260,7 @@ export default function MaintenancePlans() {
             </p>
           </div>
           <div className="sm:col-span-2">
-            <Field label="Fee name">
+            <Field label="Fee name" error={errors.name}>
               <input name="name" required defaultValue={editing?.name} className={inputClass} placeholder="e.g. Monthly Maintenance, Plot Transfer Fee" />
             </Field>
           </div>
@@ -254,10 +269,10 @@ export default function MaintenancePlans() {
               <input name="description" defaultValue={editing?.description} className={inputClass} placeholder="Short description" />
             </Field>
           </div>
-          <Field label="Amount (₹)">
+          <Field label="Amount (₹)" error={errors.amount}>
             <input name="amount" type="number" min="0" required defaultValue={editing?.amount} className={inputClass} placeholder="2500" />
           </Field>
-          <Field label="Frequency">
+          <Field label="Frequency" error={errors.frequency}>
             <select name="frequency" defaultValue={editing?.frequency ?? "monthly"} className={inputClass}>
               {FREQUENCIES.map((f) => (
                 <option key={f.value} value={f.value}>{f.label}</option>
@@ -273,7 +288,7 @@ export default function MaintenancePlans() {
               <option value="percentage">Percentage (%)</option>
             </select>
           </Field>
-          <Field label="Late fee amount">
+          <Field label="Late fee amount" error={errors.lateFeeAmount}>
             <input name="lateFeeAmount" type="number" min="0" defaultValue={editing?.lateFeeAmount ?? 0} className={inputClass} />
           </Field>
           <div className="sm:col-span-2">

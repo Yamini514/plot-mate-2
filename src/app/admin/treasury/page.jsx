@@ -22,10 +22,11 @@ import { Icon } from "@/components/Icon";
 import { ShareModal } from "@/components/ShareModal";
 import { CategoryBarChart, CollectionTrendChart } from "@/components/charts";
 import { useSettings } from "@/lib/useSettings";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatINR, formatDate, downloadCSV } from "@/lib/utils";
+import { number as vnumber, presence, collect, hasErrors } from "@/lib/validate";
 
 const CATEGORIES = [
   "Road work", "Street lights", "Compound wall", "Plantation",
@@ -84,6 +85,7 @@ export default function TreasuryPage() {
   const [fundsOpen, setFundsOpen] = useState(false);
   const [fundForm, setFundForm] = useState(emptyFund);
   const [savingFunds, setSavingFunds] = useState(false);
+  const [errors, setErrors] = useState({});
   const [confirmTxn, setConfirmTxn] = useState(null); // manual ledger entry to reverse
   const [deletingTxn, setDeletingTxn] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -92,8 +94,12 @@ export default function TreasuryPage() {
   const addFunds = async () => {
     const amount = Number(fundForm.amount) || 0;
     const category = fundForm.category === "Other" ? fundForm.customCategory.trim() : fundForm.category;
-    if (amount <= 0) { toast("Enter an amount greater than zero", "error"); return; }
-    if (fundForm.category === "Other" && !category) { toast("Enter the fund category", "error"); return; }
+    const errs = collect({
+      fundAmount: vnumber(fundForm.amount, { positive: true, label: "Amount" }),
+      fundCategory: fundForm.category === "Other" ? presence(category, "Category") : "",
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSavingFunds(true);
     try {
       await api.post("/admin/treasury/funds", {
@@ -108,7 +114,9 @@ export default function TreasuryPage() {
       setFundsOpen(false);
       reloadLedger();
     } catch (e) {
-      toast(e.message || "Could not add funds", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not add funds", "error");
     } finally {
       setSavingFunds(false);
     }
@@ -165,10 +173,12 @@ export default function TreasuryPage() {
 
   const saveExpense = async () => {
     const amount = Number(form.amount) || 0;
-    if (!form.description.trim() || amount <= 0) {
-      toast("Enter a description and amount", "error");
-      return;
-    }
+    const errs = collect({
+      description: presence(form.description, "Description"),
+      amount: vnumber(form.amount, { positive: true, label: "Amount" }),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     const payload = {
       date: form.date || undefined,
       description: form.description.trim(),
@@ -191,7 +201,9 @@ export default function TreasuryPage() {
       setAddOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not save expense", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not save expense", "error");
     } finally {
       setSaving(false);
     }
@@ -407,7 +419,7 @@ export default function TreasuryPage() {
 
       <Modal
         open={addOpen}
-        onClose={() => setAddOpen(false)}
+        onClose={() => { setAddOpen(false); setErrors({}); }}
         title={editing ? "Edit expense" : "Add expense"}
         wide
         footer={
@@ -423,7 +435,7 @@ export default function TreasuryPage() {
           <Field label="Date">
             <input type="date" className={inputClass} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
           </Field>
-          <Field label="Amount (₹)">
+          <Field label="Amount (₹)" error={errors.amount}>
             <input type="number" className={inputClass} placeholder="0" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
           </Field>
           <Field label="Category">
@@ -437,7 +449,7 @@ export default function TreasuryPage() {
             <input className={inputClass} placeholder="Vendor name" value={form.vendor} onChange={(e) => setForm({ ...form, vendor: e.target.value })} />
           </Field>
           <div className="col-span-2">
-            <Field label="Description">
+            <Field label="Description" error={errors.description}>
               <input className={inputClass} placeholder="What was this for?" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </Field>
           </div>
@@ -521,7 +533,7 @@ export default function TreasuryPage() {
       {/* Add funds (manual income) */}
       <Modal
         open={fundsOpen}
-        onClose={() => setFundsOpen(false)}
+        onClose={() => { setFundsOpen(false); setErrors({}); }}
         title="Add funds"
         wide
         footer={
@@ -541,7 +553,7 @@ export default function TreasuryPage() {
             <Field label="Date">
               <input type="date" className={inputClass} value={fundForm.date} onChange={(e) => setFundForm({ ...fundForm, date: e.target.value })} />
             </Field>
-            <Field label="Amount (₹)">
+            <Field label="Amount (₹)" error={errors.fundAmount}>
               <input type="number" min="0" className={inputClass} placeholder="0" value={fundForm.amount} onChange={(e) => setFundForm({ ...fundForm, amount: e.target.value })} />
             </Field>
             <Field label="Source / category">
@@ -550,7 +562,7 @@ export default function TreasuryPage() {
               </select>
             </Field>
             {fundForm.category === "Other" && (
-              <Field label="Enter category">
+              <Field label="Enter category" error={errors.fundCategory}>
                 <input className={inputClass} placeholder="e.g. Scrap sale" value={fundForm.customCategory} onChange={(e) => setFundForm({ ...fundForm, customCategory: e.target.value })} />
               </Field>
             )}

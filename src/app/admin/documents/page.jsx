@@ -18,12 +18,13 @@ import {
   EmptyState,
 } from "@/components/ui";
 import { Icon } from "@/components/Icon";
-import { api, normalizeList } from "@/lib/api";
+import { api, normalizeList, fieldErrors } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
 import { uploadDocument, formatBytes } from "@/lib/upload";
 import { useSettings } from "@/lib/useSettings";
+import { presence, future, collect, hasErrors } from "@/lib/validate";
 
 const catIcon = {
   Legal: "scale",
@@ -77,6 +78,7 @@ export default function AdminDocumentsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null); // document being edited, or null = new
   const [form, setForm] = useState(emptyForm);
+  const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -84,10 +86,11 @@ export default function AdminDocumentsPage() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const fileRef = useRef(null);
 
-  const openCreate = () => { setEditing(null); setForm(emptyForm); setOpen(true); };
+  const openCreate = () => { setEditing(null); setForm(emptyForm); setErrors({}); setOpen(true); };
   const openEdit = (d) => {
     const known = CATEGORIES.includes(d.category);
     setEditing(d);
+    setErrors({});
     setForm({
       name: d.name ?? "",
       category: known ? d.category : "Other",
@@ -126,19 +129,15 @@ export default function AdminDocumentsPage() {
   };
 
   const submit = async () => {
-    if (!form.name.trim()) {
-      toast("Document name is required", "error");
-      return;
-    }
-    if (form.visibility === "plot" && !form.plotNo.trim()) {
-      toast("Enter the plot number this document belongs to", "error");
-      return;
-    }
     const category = form.category === "Other" ? form.customCategory.trim() : form.category;
-    if (form.category === "Other" && !category) {
-      toast("Enter the document category", "error");
-      return;
-    }
+    const errs = collect({
+      name: presence(form.name, "Document name"),
+      customCategory: form.category === "Other" ? presence(category, "Category") : "",
+      plotNo: form.visibility === "plot" ? presence(form.plotNo, "Plot number") : "",
+      expiryDate: future(form.expiryDate, { label: "Expiry date" }),
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     setSaving(true);
     try {
       // Files upload to S3 directly from the picker above (storing the private
@@ -168,7 +167,9 @@ export default function AdminDocumentsPage() {
       setOpen(false);
       reload();
     } catch (e) {
-      toast(e.message || "Could not save document", "error");
+      const fe = fieldErrors(e);
+      if (hasErrors(fe)) setErrors(fe);
+      else toast(e.message || "Could not save document", "error");
     } finally {
       setSaving(false);
     }
@@ -361,7 +362,7 @@ export default function AdminDocumentsPage() {
               </>
             )}
           </button>
-          <Field label="Document name">
+          <Field label="Document name" required error={errors.name}>
             <input className={inputClass} placeholder="e.g. Society bylaws 2025" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </Field>
           <div className="grid grid-cols-2 gap-4">
@@ -373,7 +374,7 @@ export default function AdminDocumentsPage() {
               </select>
             </Field>
             {form.category === "Other" ? (
-              <Field label="Enter category">
+              <Field label="Enter category" required error={errors.customCategory}>
                 <input className={inputClass} placeholder="e.g. Insurance" value={form.customCategory} onChange={(e) => setForm({ ...form, customCategory: e.target.value })} />
               </Field>
             ) : (
@@ -398,7 +399,7 @@ export default function AdminDocumentsPage() {
                 {DOC_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </Field>
-            <Field label="Expiry date" hint="Owners/admins get a reminder before it lapses">
+            <Field label="Expiry date" hint="Owners/admins get a reminder before it lapses" error={errors.expiryDate}>
               <input type="date" className={inputClass} value={form.expiryDate} onChange={(e) => setForm({ ...form, expiryDate: e.target.value })} />
             </Field>
           </div>
@@ -417,7 +418,7 @@ export default function AdminDocumentsPage() {
                 </select>
               </Field>
               {form.visibility === "plot" && (
-                <Field label="Plot number">
+                <Field label="Plot number" required error={errors.plotNo}>
                   <input className={inputClass} placeholder="e.g. P-047" value={form.plotNo} onChange={(e) => setForm({ ...form, plotNo: e.target.value })} />
                 </Field>
               )}

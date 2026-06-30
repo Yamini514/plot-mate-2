@@ -6,6 +6,7 @@ import { Modal, Button, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/Icon";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/Toast";
+import { collect, hasErrors } from "@/lib/validate";
 
 // Importable plot fields and the header synonyms we auto-detect them from.
 const FIELDS = [
@@ -50,10 +51,12 @@ export function OwnersImportModal({ existingPlotNos, onClose, onDone }) {
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
+  const [errors, setErrors] = useState({});
 
   const readFile = async (file) => {
     if (!file) return;
     setParsing(true);
+    setErrors({});
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
@@ -136,10 +139,11 @@ export function OwnersImportModal({ existingPlotNos, onClose, onDone }) {
   };
 
   const runImport = async () => {
-    if (mapping.plotNo == null) {
-      toast("Map the Plot number column first", "error");
-      return;
-    }
+    const errs = collect({
+      plotNo: mapping.plotNo == null ? "Map the Plot number column to continue" : "",
+    });
+    setErrors(errs);
+    if (hasErrors(errs)) return;
     if (importable.length === 0) {
       toast("No valid rows to import", "error");
       return;
@@ -275,9 +279,9 @@ export function OwnersImportModal({ existingPlotNos, onClose, onDone }) {
                 </label>
               ))}
             </div>
-            {mapping.plotNo == null && (
+            {(mapping.plotNo == null || errors.plotNo) && (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-rose-600">
-                <Icon name="triangle-alert" size={13} /> Map the <b>Plot number</b> column to continue.
+                <Icon name="triangle-alert" size={13} /> {errors.plotNo || <>Map the <b>Plot number</b> column to continue.</>}
               </p>
             )}
           </div>
