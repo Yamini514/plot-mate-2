@@ -30,7 +30,7 @@ const catIcon = {
   Other: "circle-help",
 };
 
-const emptyForm = { title: "", category: "Roads", priority: "medium", description: "" };
+const emptyForm = { title: "", category: "Roads", customCategory: "", priority: "medium", description: "" };
 
 export default function MemberComplaintsPage() {
   const { data: raw, reload } = useApi("/member/complaints");
@@ -88,12 +88,17 @@ export default function MemberComplaintsPage() {
       toast("Please add a title", "error");
       return;
     }
+    const category = form.category === "Other" ? form.customCategory.trim() : form.category;
+    if (form.category === "Other" && !category) {
+      toast("Enter the category", "error");
+      return;
+    }
     setSaving(true);
     try {
       await api.post("/member/complaints", {
         title: form.title.trim(),
         description: form.description.trim(),
-        category: form.category,
+        category,
         priority: form.priority,
         attachments: photos,
       });
@@ -218,6 +223,11 @@ export default function MemberComplaintsPage() {
               </select>
             </Field>
           </div>
+          {form.category === "Other" && (
+            <Field label="Enter category">
+              <input className={inputClass} placeholder="What kind of issue?" value={form.customCategory} onChange={(e) => setForm({ ...form, customCategory: e.target.value })} />
+            </Field>
+          )}
           <Field label="Description">
             <textarea rows={4} className={inputClass} placeholder="Describe the issue in detail…" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </Field>

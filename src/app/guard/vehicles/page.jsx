@@ -14,7 +14,7 @@ import { useToast } from "@/components/Toast";
 import { formatDate } from "@/lib/utils";
 import { collect, hasErrors, presence } from "@/lib/validate";
 
-const EMPTY = { vehicleNo: "", vehicleType: "Car", ownerKind: "visitor", plotNo: "", driverName: "", phone: "", parkingSlot: "" };
+const EMPTY = { vehicleNo: "", vehicleType: "Car", customVehicleType: "", ownerKind: "visitor", plotNo: "", driverName: "", phone: "", parkingSlot: "" };
 
 export default function GuardVehiclesPage() {
   const toast = useToast();
@@ -34,11 +34,15 @@ export default function GuardVehiclesPage() {
   const [busy, setBusy] = useState(false);
 
   const logIn = async () => {
-    const errs = collect({ vehicleNo: presence(form.vehicleNo, "Vehicle number") });
+    const vehicleType = form.vehicleType === "Other" ? form.customVehicleType.trim() : form.vehicleType;
+    const errs = collect({
+      vehicleNo: presence(form.vehicleNo, "Vehicle number"),
+      customVehicleType: form.vehicleType === "Other" ? presence(vehicleType, "Type") : "",
+    });
     setErrors(errs);
     if (hasErrors(errs)) return;
     setBusy(true);
-    try { await api.post("/guard/vehicles", form); toast("Vehicle logged in"); setForm(EMPTY); setOpen(false); reload(); }
+    try { await api.post("/guard/vehicles", { ...form, vehicleType }); toast("Vehicle logged in"); setForm(EMPTY); setOpen(false); reload(); }
     catch (e) { toast(e.message || "Could not log vehicle", "error"); }
     finally { setBusy(false); }
   };
@@ -105,6 +109,7 @@ export default function GuardVehiclesPage() {
           </Field>
           <Field label="Type"><select className={inputClass} value={form.vehicleType} onChange={(e) => setForm({ ...form, vehicleType: e.target.value })}>{types.map((t) => <option key={t} value={t}>{t}</option>)}</select></Field>
           <Field label="For"><select className={inputClass} value={form.ownerKind} onChange={(e) => setForm({ ...form, ownerKind: e.target.value })}><option value="visitor">Visitor</option><option value="owner">Owner</option></select></Field>
+          {form.vehicleType === "Other" && <Field label="Enter type" error={errors.customVehicleType} className="col-span-2"><input className={inputClass} placeholder="e.g. Tractor" value={form.customVehicleType} onChange={(e) => setForm({ ...form, customVehicleType: e.target.value })} /></Field>}
           <Field label="Plot (optional)"><input className={inputClass} value={form.plotNo} onChange={(e) => setForm({ ...form, plotNo: e.target.value })} /></Field>
           <Field label="Parking slot (optional)"><input className={inputClass} value={form.parkingSlot} onChange={(e) => setForm({ ...form, parkingSlot: e.target.value })} /></Field>
           <Field label="Driver name (optional)"><input className={inputClass} value={form.driverName} onChange={(e) => setForm({ ...form, driverName: e.target.value })} /></Field>

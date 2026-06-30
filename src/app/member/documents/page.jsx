@@ -54,7 +54,7 @@ export default function MemberDocumentsPage() {
   const mine = documents.filter((d) => d.visibility === "plot");
 
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", category: "Legal", docType: "" });
+  const [form, setForm] = useState({ name: "", category: "Legal", customCategory: "", docType: "" });
   const [file, setFile] = useState(null); // { url, name, size }
   const [replacingId, setReplacingId] = useState(null);
 
@@ -84,17 +84,19 @@ export default function MemberDocumentsPage() {
   const submit = async () => {
     if (!form.name.trim()) return toast("Give the document a name", "error");
     if (!file) return toast("Attach a file", "error");
+    const category = form.category === "Other" ? form.customCategory.trim() : form.category;
+    if (form.category === "Other" && !category) return toast("Enter the category", "error");
     setSaving(true);
     try {
       await api.post("/member/documents", {
         name: form.name.trim(),
-        category: form.category,
+        category,
         docType: form.docType || null,
         url: file.url,
         size: file.size,
       });
       toast("Uploaded — sent to the association for approval");
-      setForm({ name: "", category: "Legal", docType: "" });
+      setForm({ name: "", category: "Legal", customCategory: "", docType: "" });
       setFile(null);
       setOpen(false);
       reload();
@@ -182,6 +184,11 @@ export default function MemberDocumentsPage() {
                 {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
               </select>
             </Field>
+            {form.category === "Other" && (
+              <Field label="Enter category">
+                <input className={inputClass} placeholder="Document category" value={form.customCategory} onChange={(e) => setForm({ ...form, customCategory: e.target.value })} />
+              </Field>
+            )}
             <Field label="Type">
               <select className={inputClass} value={form.docType} onChange={(e) => setForm({ ...form, docType: e.target.value })}>
                 <option value="">—</option>
