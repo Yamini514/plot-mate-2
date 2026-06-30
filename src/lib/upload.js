@@ -39,7 +39,7 @@ export async function uploadImage(file, { max = 1280, quality = 0.85 } = {}) {
   const dataUrl = await downscaleImage(file, max, quality);
   let finalUrl = dataUrl; // inline fallback (works with no storage infra)
   try {
-    const { data } = await api.post("/admin/uploads/presign", { contentType: "image/jpeg" });
+    const { data } = await api.post("/uploads/presign", { contentType: "image/jpeg" });
     if (data?.configured && data.uploadUrl) {
       const blob = await (await fetch(dataUrl)).blob();
       const put = await fetch(data.uploadUrl, {
@@ -65,7 +65,7 @@ export async function uploadImage(file, { max = 1280, quality = 0.85 } = {}) {
 // fallback — documents can be large — so this throws if storage isn't wired.
 export async function uploadDocument(file) {
   const contentType = file.type || "application/octet-stream";
-  const { data } = await api.post("/admin/documents/presign", {
+  const { data } = await api.post("/uploads/document-presign", {
     filename: file.name,
     contentType,
   });
